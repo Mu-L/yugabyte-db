@@ -1,40 +1,36 @@
 ---
 title: YugabyteDB Anywhere on-premises node provisioning
-headerTitle: Provisioning on-premises nodes
-linkTitle: Provision nodes
+headerTitle: Legacy provisioning
+linkTitle: Legacy provisioning
 description: Software requirements for on-premises provider nodes.
-headContent: How to meet the software prerequisites with fully manual provisioning
+headContent: How to meet the software prerequisites for database nodes
 menu:
   v2024.2_yugabyte-platform:
-    identifier: software-on-prem-3-manual
+    identifier: software-on-prem-4-manual
     parent: software-on-prem
     weight: 10
 type: docs
 ---
 
-{{<tip title="v2.20 and earlier">}}
-For instructions on preparing nodes for on-premises configurations in v2.20 and earlier, see [Create on-premises provider configuration](/v2.20/yugabyte-platform/configure-yugabyte-platform/set-up-cloud-provider/on-premises/).
-{{</tip>}}
-
 <ul class="nav nav-tabs-alt nav-tabs-yb">
   <li>
     <a href="../software-on-prem-auto/" class="nav-link">
       <i class="fa-regular fa-wand-magic-sparkles"></i>
-      Automatic
+      Automatic [Deprecated]
     </a>
   </li>
 
   <li>
     <a href="../software-on-prem-assist/" class="nav-link">
       <i class="fa-regular fa-scroll"></i>
-      Assisted manual
+      Assisted [Deprecated]
     </a>
   </li>
 
   <li>
     <a href="../software-on-prem-manual/" class="nav-link active">
       <i class="icon-shell" aria-hidden="true"></i>
-      Fully manual
+      Fully manual [Deprecated]
     </a>
   </li>
 </ul>
@@ -50,6 +46,10 @@ Your responsibility now (to meet prerequisites) is to provide a VM with the foll
 | Save for later | To configure |
 | :--- | :--- |
 | VM IP addresses | [On-premises provider](../../../configure-yugabyte-platform/on-premises/) |
+
+{{<tip>}}
+For instructions for v2.20 and earlier, see [Create on-premises provider configuration](/v2.20/yugabyte-platform/configure-yugabyte-platform/set-up-cloud-provider/on-premises/).
+{{</tip>}}
 
 ## Manually provision a VM
 
