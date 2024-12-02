@@ -1550,8 +1550,8 @@ Status PgApiImpl::FetchRequestedYbctids(
   return select.Exec(exec_params);
 }
 
-Status PgApiImpl::DmlANNBindVector(PgStatement* handle, int vec_att_no, PgExpr* vector) {
-  return VERIFY_RESULT_REF(GetStatementAs<PgDml>(handle)).ANNBindVector(vec_att_no, vector);
+Status PgApiImpl::DmlANNBindVector(PgStatement* handle, PgExpr* vector) {
+  return VERIFY_RESULT_REF(GetStatementAs<PgDml>(handle)).ANNBindVector(vector);
 }
 
 Status PgApiImpl::DmlANNSetPrefetchSize(PgStatement* handle, int prefetch_size) {
@@ -2107,11 +2107,12 @@ Status PgApiImpl::PrefetchRegisteredSysTables() {
 }
 
 void PgApiImpl::RegisterSysTableForPrefetching(
-  const PgObjectId& table_id, const PgObjectId& index_id, int row_oid_filtering_attr) {
+    const PgObjectId& table_id, const PgObjectId& index_id, int row_oid_filtering_attr,
+    bool fetch_ybctid) {
   if (!pg_sys_table_prefetcher_) {
     LOG(DFATAL) << "Sys table prefetching was not started yet";
   } else {
-    pg_sys_table_prefetcher_->Register(table_id, index_id, row_oid_filtering_attr);
+    pg_sys_table_prefetcher_->Register(table_id, index_id, row_oid_filtering_attr, fetch_ybctid);
   }
 }
 

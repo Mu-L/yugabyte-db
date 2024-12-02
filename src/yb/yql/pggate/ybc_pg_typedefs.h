@@ -405,6 +405,8 @@ typedef struct PgGFlagsAccessor {
   const bool*     TEST_ysql_enable_db_logical_client_version_mode;
   const bool*     ysql_conn_mgr_superuser_sticky;
   const bool*     TEST_ysql_log_perdb_allocated_new_objectid;
+  const bool*     ysql_conn_mgr_version_matching;
+  const bool*     ysql_conn_mgr_version_matching_connect_higher_version;
 } YBCPgGFlagsAccessor;
 
 typedef struct YbTablePropertiesData {
@@ -758,6 +760,11 @@ typedef struct WaitEventDescriptor {
   uint32_t code;
   const char *description;
 } YBCWaitEventDescriptor;
+
+typedef enum AshConstQueryIdType {
+  QUERY_ID_TYPE_DEFAULT,
+  QUERY_ID_TYPE_BACKGROUND_WORKER
+} YBCAshConstQueryIdType;
 
 typedef struct YBCBindColumn {
   int attr_num;
