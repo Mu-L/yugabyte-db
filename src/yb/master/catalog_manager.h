@@ -205,9 +205,7 @@ struct YsqlTableDdlTxnState;
 // the state of each tablet on a given tablet-server.
 //
 // Thread-safe.
-class CatalogManager : public tserver::TabletPeerLookupIf,
-                       public CatalogManagerIf,
-                       public SnapshotCoordinatorContext {
+class CatalogManager : public CatalogManagerIf, public SnapshotCoordinatorContext {
   typedef std::unordered_map<NamespaceName, scoped_refptr<NamespaceInfo> > NamespaceInfoMap;
 
   class NamespaceNameMapper {
@@ -2934,6 +2932,12 @@ class CatalogManager : public tserver::TabletPeerLookupIf,
       const NamespaceName& namespace_name, const TableInfoPtr& indexed_table) REQUIRES(mutex_);
 
   bool IsYsqlMajorCatalogUpgradeInProgress() const;
+
+  // In the case of an online ysql major catalog upgrade, returns the current version only if the
+  // current version's catalog is valid, meaning in the MONITORING stage, or post-upgrade. If we are
+  // before the MONITORING stage, returns the prior version's table. In the case of a clean install,
+  // returns the current version.
+  Result<TableId> GetVersionSpecificCatalogTableId(const TableId& table_id) const override;
 
   bool SkipCatalogVersionChecks() override;
 

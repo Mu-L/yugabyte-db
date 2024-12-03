@@ -5043,8 +5043,6 @@ binary_upgrade_set_pg_class_oids(Archive *fout,
 							  "SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('%u'::pg_catalog.oid);\n",
 							  toast_index_relfilenode);
 		}
-
-		PQclear(upgrade_res);
 	}
 	else
 	{
@@ -5056,6 +5054,8 @@ binary_upgrade_set_pg_class_oids(Archive *fout,
 						  "SELECT pg_catalog.binary_upgrade_set_next_index_relfilenode('%u'::pg_catalog.oid);\n",
 						  relfilenode);
 	}
+
+	PQclear(upgrade_res);
 
 	appendPQExpBufferChar(upgrade_buffer, '\n');
 
@@ -15683,7 +15683,7 @@ dumpTableSchema(Archive *fout, const TableInfo *tbinfo)
 
 		/* Get the table properties from YB, if relevant. */
 		YbTableProperties yb_properties = NULL;
-		if (dopt->include_yb_metadata &&
+		if ((dopt->include_yb_metadata || dopt->binary_upgrade) &&
 			(tbinfo->relkind == RELKIND_RELATION || tbinfo->relkind == RELKIND_INDEX
 			 || tbinfo->relkind == RELKIND_MATVIEW || tbinfo->relkind == RELKIND_PARTITIONED_TABLE))
 		{
