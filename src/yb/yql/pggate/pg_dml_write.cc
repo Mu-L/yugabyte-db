@@ -52,6 +52,10 @@ Status PgDmlWrite::Prepare(const PgObjectId& table_id, bool is_region_local) {
   write_req_->set_schema_version(target_->schema_version());
   write_req_->set_stmt_id(reinterpret_cast<uint64_t>(write_req_.get()));
 
+  if (pg_session_->AreCatalogModificationsForceAllowed()) {
+    write_req_->set_force_catalog_modifications(true);
+  }
+
   doc_op_ = std::make_shared<PgDocWriteOp>(pg_session_, &target_, std::move(write_op));
   PrepareColumns();
   return Status::OK();
@@ -165,17 +169,8 @@ LWPgsqlExpressionPB* PgDmlWrite::AllocTargetPB() {
   return write_req_->add_targets();
 }
 
-LWPgsqlExpressionPB* PgDmlWrite::AllocQualPB() {
-  LOG(FATAL) << "Pure virtual function is being called";
-  return nullptr;
-}
-
-LWPgsqlColRefPB* PgDmlWrite::AllocColRefPB() {
-  return write_req_->add_col_refs();
-}
-
-void PgDmlWrite::ClearColRefPBs() {
-  write_req_->mutable_col_refs()->clear();
+ArenaList<LWPgsqlColRefPB>& PgDmlWrite::ColRefPBs() {
+  return *write_req_->mutable_col_refs();
 }
 
 template <class T>

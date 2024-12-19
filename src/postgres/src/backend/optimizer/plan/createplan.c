@@ -4345,14 +4345,14 @@ create_indexscan_plan(PlannerInfo *root,
 		if (bitmapindex)
 			need_idx_remote = true;
 		/*
-		 * For hypothetical index where no covered index is involved, there is
+		 * For hypothetical index where primary index isn't involved, there is
 		 * no Relation. Hence don't make change to need_idx_remote.
 		 */
 		else if (!indexonly && !best_path->indexinfo->hypothetical)
 		{
 			Relation index;
 			index = RelationIdGetRelation(best_path->indexinfo->indexoid);
-			need_idx_remote = !YBIsCoveredByMainTable(index);
+			need_idx_remote = !index->rd_index->indisprimary;
 			RelationClose(index);
 		}
 		else
@@ -9100,25 +9100,6 @@ make_modifytable(PlannerInfo *root, Plan *subplan,
 	node->yb_skip_entities = NULL;
 	node->yb_update_affected_entities = NULL;
 	node->no_row_trigger = false;
-
-	/*
-	 * It suffices to use the first entry of resultRelations to compute
-	 * ybUseScanTupleInUpdate.
-	 * resultRelations contains more than one entry for partitioned relations
-	 * and ybUseScanTupleInUpdate is true for all partitioned relations.
-	 */
-	Index rti = linitial_int(resultRelations);
-	RangeTblEntry *rte = root->simple_rte_array[rti];
-	Relation relation = RelationIdGetRelation(rte->relid);
-	Bitmapset *updatedCols = bms_add_members(
-		get_dependent_generated_columns(root, rti, rte->updatedCols),
-		rte->updatedCols);
-	node->ybUseScanTupleInUpdate = YbUseScanTupleInUpdate(
-		relation, updatedCols, root->parse->returningList);
-	node->ybHasWholeRowAttribute = YbUseWholeRowJunkAttribute(
-		relation, updatedCols, operation, root->parse->returningList);
-	bms_free(updatedCols);
-	RelationClose(relation);
 	return node;
 }
 

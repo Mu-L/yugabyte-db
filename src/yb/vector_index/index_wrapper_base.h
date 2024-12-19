@@ -27,7 +27,7 @@ namespace yb::vector_index {
 template<class Impl, IndexableVectorType Vector, ValidDistanceResultType DistanceResult>
 class IndexWrapperBase : public VectorIndexIf<Vector, DistanceResult> {
  public:
-  Status Insert(VertexId vertex_id, const Vector& v) override {
+  Status Insert(VectorId vertex_id, const Vector& v) override {
     if (immutable_) {
       return STATUS_FORMAT(IllegalState, "Attempt to insert value to immutable vector");
     }
@@ -45,9 +45,9 @@ class IndexWrapperBase : public VectorIndexIf<Vector, DistanceResult> {
     return impl().DoSaveToFile(path);
   }
 
-  Status LoadFromFile(const std::string& path) override {
+  Status LoadFromFile(const std::string& path, size_t max_concurrent_reads) override {
     immutable_ = true;
-    RETURN_NOT_OK(impl().DoLoadFromFile(path));
+    RETURN_NOT_OK(impl().DoLoadFromFile(path, max_concurrent_reads));
     has_entries_ = true;
     return Status::OK();
   }

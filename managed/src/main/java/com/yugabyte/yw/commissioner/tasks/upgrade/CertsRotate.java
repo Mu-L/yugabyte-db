@@ -68,7 +68,10 @@ public class CertsRotate extends UpgradeTaskBase {
   @Override
   protected void createPrecheckTasks(Universe universe) {
     super.createPrecheckTasks(universe);
-    addBasicPrecheckTasks();
+    // Skip running prechecks if Node2Node certs has expired
+    if (!CertificateHelper.checkNode2NodeCertsExpiry(universe)) {
+      addBasicPrecheckTasks();
+    }
     createCheckCertificateConfigTask(universe);
   }
 
@@ -156,7 +159,10 @@ public class CertsRotate extends UpgradeTaskBase {
             createCertReloadConfigTask(universe);
             log.info("cert reload configuration task scheduled for this universe");
           }
-        });
+        },
+        // Save the params set in setAdditionalTaskParams in verify params.
+        // TODO move setting the params from verifyParams to freeze callback.
+        u -> updateTaskDetailsInDB(taskParams()));
   }
 
   private void createCertUpdateTasks(

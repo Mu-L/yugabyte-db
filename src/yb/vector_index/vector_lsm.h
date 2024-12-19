@@ -13,21 +13,18 @@
 
 #pragma once
 
+#include <condition_variable>
 #include <future>
 #include <map>
-
-#include "yb/common/hybrid_time.h"
-
-#include "yb/dockv/key_bytes.h"
 
 #include "yb/rocksdb/rocksdb_fwd.h"
 #include "yb/rocksdb/metadata.h"
 
 #include "yb/rpc/rpc_fwd.h"
 
+#include "yb/util/kv_util.h"
 #include "yb/util/locks.h"
 
-#include "yb/vector_index/vector_lsm.fwd.h"
 #include "yb/vector_index/vector_index_if.h"
 
 namespace yb::vector_index {
@@ -51,9 +48,9 @@ struct VectorLSMSearchOptions {
 
 template<IndexableVectorType Vector>
 struct VectorLSMInsertEntry {
-  VertexId vertex_id;
+  VectorId  vertex_id;
   KeyBuffer base_table_key;
-  Vector vector;
+  Vector    vector;
 };
 
 template<IndexableVectorType Vector,
@@ -79,12 +76,18 @@ struct VectorLSMTypes {
   using VertexWithDistance = vector_index::VertexWithDistance<DistanceResult>;
 };
 
-using BaseTableKeysBatch = std::vector<std::pair<VertexId, Slice>>;
+using BaseTableKeysBatch = std::vector<std::pair<VectorId, Slice>>;
+
+struct VectorLSMInsertContext {
+  const rocksdb::UserFrontiers* frontiers = nullptr;
+};
 
 class VectorLSMKeyValueStorage {
  public:
-  virtual Status StoreBaseTableKeys(const BaseTableKeysBatch& batch, HybridTime write_time) = 0;
-  virtual Result<KeyBuffer> ReadBaseTableKey(VertexId vertex_id) = 0;
+  virtual Status StoreBaseTableKeys(
+      const BaseTableKeysBatch& batch, const VectorLSMInsertContext& context) = 0;
+
+  virtual Result<KeyBuffer> ReadBaseTableKey(VectorId vertex_id) = 0;
 
   virtual ~VectorLSMKeyValueStorage() = default;
 };
@@ -128,14 +131,15 @@ class VectorLSM {
   Status Open(Options options);
 
   rocksdb::UserFrontierPtr GetFlushedFrontier();
+  rocksdb::FlushAbility GetFlushAbility();
 
-  Status Insert(
-      std::vector<InsertEntry> entries, HybridTime write_time,
-      const rocksdb::UserFrontiers* frontiers);
+  Status Insert(std::vector<InsertEntry> entries, const VectorLSMInsertContext& context);
 
   Result<SearchResults> Search(const Vector& query_vector, const SearchOptions& options) const;
 
-  Status Flush();
+  Status Flush(bool wait);
+  Status WaitForFlush();
+
   void StartShutdown();
   void CompleteShutdown();
 
@@ -167,6 +171,8 @@ class VectorLSM {
 
   Status CreateNewMutableChunk(size_t min_points) REQUIRES(mutex_);
 
+  Status RemoveUpdateQueueEntry(size_t order_no) REQUIRES(mutex_);
+
   Options options_;
   rocksdb::Env* const env_;
 
@@ -182,6 +188,7 @@ class VectorLSM {
 
   // order_no is used as key in this map.
   std::map<size_t, ImmutableChunkPtr> updates_queue_ GUARDED_BY(mutex_);
+  std::condition_variable_any updates_queue_empty_;
 
   bool writing_update_ GUARDED_BY(mutex_) = false;
   Status failed_status_ GUARDED_BY(mutex_);

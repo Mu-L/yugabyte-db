@@ -26,6 +26,7 @@ DECLARE_int32(cdc_parent_tablet_deletion_task_retry_secs);
 DECLARE_string(certs_for_cdc_dir);
 DECLARE_bool(TEST_force_automatic_ddl_replication_mode);
 DECLARE_bool(disable_xcluster_db_scoped_new_table_processing);
+DECLARE_bool(xcluster_skip_health_check_on_replication_setup);
 
 using namespace std::chrono_literals;
 
@@ -290,6 +291,8 @@ TEST_F(XClusterDBScopedTest, DropAllTables) {
       /*idx=*/2, /*num_tablets=*/3, &consumer_cluster_));
   std::shared_ptr<client::YBTable> consumer_table2;
   ASSERT_OK(consumer_client()->OpenTable(consumer_table2_name, &consumer_table2));
+
+  ASSERT_OK(WaitForSafeTimeToAdvanceToNow());
 
   ASSERT_OK(VerifyWrittenRecords(producer_table2, consumer_table2));
 }
@@ -649,6 +652,9 @@ TEST_F_EX(XClusterDBScopedTest, RemoveNamespaceWhenSourceIsDown, XClusterDBScope
   ASSERT_OK(target_xcluster_client.RemoveNamespaceFromUniverseReplication(
       kReplicationGroupId, source_namespace2_id_, UniverseUuid::Nil()));
 
+  // The replication group is unhealthy since source is down.
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_xcluster_skip_health_check_on_replication_setup) = true;
+
   master::GetUniverseReplicationResponsePB resp;
   ASSERT_OK(VerifyUniverseReplication(&resp));
   ASSERT_EQ(resp.entry().replication_group_id(), kReplicationGroupId);
@@ -660,6 +666,8 @@ TEST_F_EX(XClusterDBScopedTest, RemoveNamespaceWhenSourceIsDown, XClusterDBScope
     TEST_SetThreadPrefixScoped prefix_se("P");
     ASSERT_OK(producer_cluster()->StartSync());
   }
+
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_xcluster_skip_health_check_on_replication_setup) = false;
 
   // Source should still have the namespace and stream.
   auto streams = ASSERT_RESULT(GetAllXClusterStreams(source_namespace2_id_));
@@ -808,16 +816,13 @@ TEST_F(XClusterDBScopedTest, DeleteWhenSourceIsDown) {
         "already included in replication group");
   }
 
-  TEST_F_EX(XClusterDBScopedTest, TestYbAdmin, XClusterDBScopedTestWithTwoDBs) {
-    // TODO: replace this once there is a way to use automatic mode with ybadmin.
-    ANNOTATE_UNPROTECTED_WRITE(FLAGS_TEST_force_automatic_ddl_replication_mode) =
-        UseAutomaticMode();
-
+  TEST_F_EX(XClusterDBScopedTest, TestYbAdmin, XClusterDBScopedTestWithTwoDBsAutomaticDDLMode) {
     ASSERT_OK(SetUpClusters());
 
     // Create replication with 1 db.
     auto result = ASSERT_RESULT(CallAdmin(
-        producer_cluster(), "create_xcluster_checkpoint", kReplicationGroupId, namespace_name));
+        producer_cluster(), "create_xcluster_checkpoint", kReplicationGroupId, namespace_name,
+        "automatic_ddl_mode"));
     ASSERT_STR_CONTAINS(result, "Bootstrap is not required");
 
     result = ASSERT_RESULT(CallAdmin(
@@ -828,6 +833,9 @@ TEST_F(XClusterDBScopedTest, DeleteWhenSourceIsDown) {
     ASSERT_OK(CallAdmin(
         producer_cluster(), "setup_xcluster_replication", kReplicationGroupId,
         target_master_address));
+
+    // The extension should exist on both sides with all the tables.
+    ASSERT_OK(VerifyDDLExtensionTablesCreation(namespace_name));
 
     result =
         ASSERT_RESULT(CallAdmin(producer_cluster(), "list_xcluster_outbound_replication_groups"));
@@ -914,9 +922,11 @@ TEST_F(XClusterDBScopedTest, DeleteWhenSourceIsDown) {
         VerifyUniverseReplication(&resp), "Could not find xCluster replication group");
 
     ASSERT_NOK_STR_CONTAINS(GetAllXClusterStreams(source_namespace_id), "Not found");
+    ASSERT_OK(VerifyDDLExtensionTablesDeletion(namespace_name));
 
     result = ASSERT_RESULT(CallAdmin(
-        producer_cluster(), "create_xcluster_checkpoint", kReplicationGroupId, namespace_name));
+        producer_cluster(), "create_xcluster_checkpoint", kReplicationGroupId, namespace_name,
+        "automatic_ddl_mode"));
     ASSERT_STR_CONTAINS(result, "Bootstrap is required");
   }
 

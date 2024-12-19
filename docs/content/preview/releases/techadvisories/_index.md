@@ -19,17 +19,23 @@ It is strongly recommended that you take appropriate measures as outlined in the
 {{%table%}}
 | Advisory&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Synopsis | Product | Affected Versions | Date |
 | :------------------------------- | :------- | :-----: | :---------------: | :--- |
+| {{<ta 24992>}}
+|Partial Streaming Stall After Tablet Split
+| [YugabyteDB gRPC (Debezium) Connector](https://docs.yugabyte.com/preview/explore/change-data-capture/using-yugabytedb-grpc-replication/debezium-connector-yugabytedb/)
+| [dz.1.9.5.yb.grpc.2024.1](https://github.com/yugabyte/debezium-connector-yugabytedb/releases/tag/vdz.1.9.5.yb.grpc.2024.1)
+| {{<nobreak "3 December 2024">}}
+|
+| {{<ta 23476>}}
+|YCQL Timestamp Precision (Millis vs Micros)
+| {{<product "ycql">}}
+| {{<release "All">}}
+| {{<nobreak "21 November 2024">}}
+|
 | {{<ta CL-23623>}}
 |Upgrade failure from v2.20 to v2024.1 series
 | {{<product "ybdb">}}
 | {{<release "2.20.6.x">}}
 | {{<nobreak "02 October 2024">}}
-|
-| {{<ta 23476>}}
-|YCQL currenttimestamp() precision
-| {{<product "ycql">}}
-| {{<release "All">}}
-| {{<nobreak "27 August 2024">}}
 |
 | {{<ta 22935>}}
 |Potential issues with server-side sequence caching in multi-database clusters

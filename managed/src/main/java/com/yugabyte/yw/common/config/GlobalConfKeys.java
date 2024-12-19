@@ -345,12 +345,20 @@ public class GlobalConfKeys extends RuntimeConfigKeysModule {
           "YBC client timeout in milliseconds for admin operations",
           ConfDataType.IntegerType,
           ImmutableList.of(ConfKeyTags.PUBLIC));
-  public static final ConfKeyInfo<Integer> bootstrapProducerTimeoutMs =
+  public static final ConfKeyInfo<Integer> xclusterDbSyncTimeoutMs =
       new ConfKeyInfo<>(
-          "yb.xcluster.bootstrap_producer_timeout_ms",
+          "yb.xcluster.db_sync_timeout_ms",
           ScopeType.GLOBAL,
-          "Bootstrap producer timeout",
-          "Bootstrap producer timeout in milliseconds",
+          "XCluster config DB sync timeout",
+          "XCluster config background DB sync timeout in milliseconds",
+          ConfDataType.IntegerType,
+          ImmutableList.of(ConfKeyTags.PUBLIC));
+  public static final ConfKeyInfo<Integer> xclusterGetApiTimeoutMs =
+      new ConfKeyInfo<>(
+          "yb.xcluster.get_api_timeout_ms",
+          ScopeType.GLOBAL,
+          "XCluster/DR config GET API timeout",
+          "XCluster/DR config GET API timeout in milliseconds",
           ConfDataType.IntegerType,
           ImmutableList.of(ConfKeyTags.PUBLIC));
   public static final ConfKeyInfo<Integer> ybcSocketReadTimeoutMs =
@@ -1510,6 +1518,14 @@ public class GlobalConfKeys extends RuntimeConfigKeysModule {
               + " than main Prometheus scrape period to complete",
           ConfDataType.StringType,
           ImmutableList.of(ConfKeyTags.PUBLIC));
+  public static final ConfKeyInfo<Integer> clusterConsistencyCheckParallelism =
+      new ConfKeyInfo<>(
+          "yb.health.consistency_check_parallelism",
+          ScopeType.GLOBAL,
+          "Max Number of Parallel cluster consistency checks",
+          "Max Number of Parallel cluster consistency checks",
+          ConfDataType.IntegerType,
+          ImmutableList.of(ConfKeyTags.INTERNAL));
   public static final ConfKeyInfo<String> oidcGroupClaim =
       new ConfKeyInfo<>(
           "yb.security.oidc_group_claim",
