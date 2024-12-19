@@ -13,6 +13,8 @@
 
 #include "yb/yql/pgwrapper/pg_mini_test_base.h"
 
+#include "yb/integration-tests/cluster_itest_util.h"
+
 #include "yb/qlexpr/index.h"
 
 #include "yb/tablet/tablet.h"
@@ -32,6 +34,7 @@ namespace yb::pgwrapper {
 class PgVectorIndexTest : public PgMiniTestBase, public testing::WithParamInterface<bool> {
  protected:
   void SetUp() override {
+    itest::SetupQuickSplit(1_KB);
     PgMiniTestBase::SetUp();
   }
 
@@ -51,22 +54,24 @@ class PgVectorIndexTest : public PgMiniTestBase, public testing::WithParamInterf
       create_suffix = " WITH (COLOCATED = 1)";
       RETURN_NOT_OK(conn.ExecuteFormat("CREATE DATABASE colocated_db COLOCATION = true"));
       conn = VERIFY_RESULT(Connect());
-    } else {
-      // TODO(vector_index) Remove it when multi-tablet vector indexes will be supported
-      create_suffix = " SPLIT INTO 1 TABLETS";
     }
-    RETURN_NOT_OK(conn.Execute("CREATE EXTENSION vector VERSION '0.4.4-yb-1.2'"));
+    RETURN_NOT_OK(conn.Execute("CREATE EXTENSION vector"));
     RETURN_NOT_OK(conn.Execute(
         "CREATE TABLE test (id bigserial PRIMARY KEY, embedding vector(3))" + create_suffix));
 
-  RETURN_NOT_OK(conn.Execute("CREATE INDEX ON test USING ybhnsw (embedding vector_l2_ops)"));
+    RETURN_NOT_OK(conn.Execute("CREATE INDEX ON test USING ybhnsw (embedding vector_l2_ops)"));
 
     return conn;
   }
 
   Result<PGConn> MakeIndexAndFill(int num_rows);
 
+  Status VerifyRead(PGConn& conn, int limit, bool add_filter);
+  void VerifyRows(PGConn& conn, bool add_filter, const std::vector<std::string>& expected);
+
   void TestSimple();
+  void TestManyRows(bool add_filter);
+  void TestRestart(tablet::FlushFlags flush_flags);
 };
 
 void PgVectorIndexTest::TestSimple() {
@@ -132,8 +137,12 @@ std::string VectorAsString(int64_t id) {
   return Format("[$0, $1, $2]", id, id * 2, id * 3);
 }
 
+std::string BuildRow(int64_t id, const std::string& value) {
+  return Format("$0, $1", id, value);
+}
+
 std::string ExpectedRow(int64_t id) {
-  return Format("$0, $1", id, VectorAsString(id));
+  return BuildRow(id, VectorAsString(id));
 }
 
 Result<PGConn> PgVectorIndexTest::MakeIndexAndFill(int num_rows) {
@@ -148,18 +157,59 @@ Result<PGConn> PgVectorIndexTest::MakeIndexAndFill(int num_rows) {
   return conn;
 }
 
-TEST_P(PgVectorIndexTest, ManyRows) {
+void PgVectorIndexTest::VerifyRows(
+    PGConn& conn, bool add_filter, const std::vector<std::string>& expected) {
+  auto result = ASSERT_RESULT((conn.FetchRows<RowAsString>(Format(
+      "SELECT * FROM test $0 ORDER BY embedding <-> '[0.0, 0.0, 0.0]' LIMIT $1",
+      add_filter ? "WHERE id + 3 <= 5" : "",
+      expected.size()))));
+  EXPECT_EQ(result.size(), expected.size());
+  for (size_t i = 0; i != std::min(result.size(), expected.size()); ++i) {
+    SCOPED_TRACE(Format("Row $0", i));
+    EXPECT_EQ(result[i], expected[i]);
+  }
+}
+
+Status PgVectorIndexTest::VerifyRead(PGConn& conn, int limit, bool add_filter) {
+  auto result = VERIFY_RESULT((conn.FetchRows<RowAsString>(Format(
+      "SELECT * FROM test $0 ORDER BY embedding <-> '[0.0, 0.0, 0.0]' LIMIT $1",
+      add_filter ? "WHERE id + 3 <= 5" : "",
+      limit))));
+  std::vector<std::string> expected;
+  for (int i = 1; i <= limit; ++i) {
+    expected.push_back(ExpectedRow(i));
+  }
+  VerifyRows(conn, add_filter, expected);
+  return Status::OK();
+}
+
+void PgVectorIndexTest::TestManyRows(bool add_filter) {
   constexpr int kNumRows = RegularBuildVsSanitizers(2000, 64);
+  const int query_limit = add_filter ? 1 : 5;
+
+  auto conn = ASSERT_RESULT(MakeIndexAndFill(kNumRows));
+  ASSERT_OK(VerifyRead(conn, query_limit, add_filter));
+}
+
+TEST_P(PgVectorIndexTest, Split) {
+  constexpr int kNumRows = RegularBuildVsSanitizers(500, 64);
   constexpr int kQueryLimit = 5;
 
   auto conn = ASSERT_RESULT(MakeIndexAndFill(kNumRows));
+  ASSERT_OK(cluster_->FlushTablets());
 
-  auto result = ASSERT_RESULT((conn.FetchRows<RowAsString>(Format(
-      "SELECT * FROM test ORDER BY embedding <-> '[0.0, 0.0, 0.0]' LIMIT $0", kQueryLimit))));
-  ASSERT_EQ(result.size(), kQueryLimit);
-  for (size_t i = 0; i != result.size(); ++i) {
-    ASSERT_EQ(result[i], ExpectedRow(i + 1));
-  }
+  // Give some time for split to happen.
+  std::this_thread::sleep_for(2s * kTimeMultiplier);
+
+  ASSERT_OK(VerifyRead(conn, kQueryLimit, false));
+}
+
+TEST_P(PgVectorIndexTest, ManyRows) {
+  TestManyRows(false);
+}
+
+TEST_P(PgVectorIndexTest, ManyRowsWithFilter) {
+  TestManyRows(true);
 }
 
 TEST_P(PgVectorIndexTest, ManyReads) {
@@ -186,6 +236,56 @@ TEST_P(PgVectorIndexTest, ManyReads) {
   }
 
   threads.WaitAndStop(5s);
+}
+
+void PgVectorIndexTest::TestRestart(tablet::FlushFlags flush_flags) {
+  constexpr int kNumRows = 64;
+  constexpr int kQueryLimit = 5;
+
+  auto conn = ASSERT_RESULT(MakeIndexAndFill(kNumRows));
+  ASSERT_OK(VerifyRead(conn, kQueryLimit, false));
+  ASSERT_OK(cluster_->FlushTablets(tablet::FlushMode::kSync, flush_flags));
+  DisableFlushOnShutdown(*cluster_, true);
+  ASSERT_OK(RestartCluster());
+  conn = ASSERT_RESULT(Connect());
+  ASSERT_OK(VerifyRead(conn, kQueryLimit, false));
+}
+
+TEST_P(PgVectorIndexTest, Restart) {
+  TestRestart(tablet::FlushFlags::kAllDbs);
+}
+
+TEST_P(PgVectorIndexTest, Bootstrap) {
+  TestRestart(tablet::FlushFlags::kRegular);
+}
+
+TEST_P(PgVectorIndexTest, BootstrapFlushedIntentsDB) {
+  TestRestart(tablet::FlushFlags::kIntents);
+}
+
+TEST_P(PgVectorIndexTest, DeleteAndUpdate) {
+  constexpr int kNumRows = 64;
+  const std::string kDistantVector = "[100, 500, 9000]";
+  const std::string kCloseVector = "[0.125, 0.25, 0.375]";
+
+  auto conn = ASSERT_RESULT(MakeIndexAndFill(kNumRows));
+  ASSERT_OK(conn.Execute("DELETE FROM test WHERE id = 1"));
+  ASSERT_OK(conn.ExecuteFormat("UPDATE test SET embedding = '$0' WHERE id = 2", kDistantVector));
+  ASSERT_OK(conn.ExecuteFormat("UPDATE test SET embedding = '$0' WHERE id = 10", kCloseVector));
+
+  std::vector<std::string> expected = {
+    BuildRow(10, kCloseVector),
+    ExpectedRow(3),
+    ExpectedRow(4),
+    ExpectedRow(5),
+    ExpectedRow(6),
+  };
+  ASSERT_NO_FATALS(VerifyRows(conn, false, expected));
+
+  std::vector<std::string> expected_filtered = {
+    BuildRow(2, kDistantVector),
+  };
+  ASSERT_NO_FATALS(VerifyRows(conn, true, expected_filtered));
 }
 
 std::string ColocatedToString(const testing::TestParamInfo<bool>& param_info) {

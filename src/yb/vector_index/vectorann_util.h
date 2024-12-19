@@ -84,7 +84,7 @@ auto DrainMaxQueueToIncreasingDistanceList(MaxDistanceQueue<DistanceResult>& que
 template<IndexableVectorType Vector, ValidDistanceResultType DistanceResult>
 std::vector<VertexWithDistance<DistanceResult>> BruteForcePreciseNearestNeighbors(
     const Vector& query,
-    const std::vector<VertexId>& vertex_ids,
+    const std::vector<VectorId>& vertex_ids,
     const VertexIdToVectorDistanceFunction<Vector, DistanceResult>& distance_fn,
     size_t num_results) {
   if (num_results == 0) {
@@ -118,21 +118,23 @@ std::vector<VertexWithDistance<DistanceResult>> BruteForcePreciseNearestNeighbor
 
 // Draft of a function that returns a pointer to a merged index
 template <IndexableVectorType Vector, ValidDistanceResultType DistanceResult>
-VectorIndexIfPtr<Vector, DistanceResult> Merge(
+Result<VectorIndexIfPtr<Vector, DistanceResult>> Merge(
     VectorIndexFactory<Vector, DistanceResult> index_factory,
-    VectorIndexIfPtr<Vector, DistanceResult> index_a,
-    VectorIndexIfPtr<Vector, DistanceResult> index_b) {
+    const std::vector<VectorIndexIfPtr<Vector, DistanceResult>>& indexes) {
   VectorIndexIfPtr<Vector, DistanceResult> merged_index = index_factory();
-  // TODO(vector_index) we need a way to get the size of merging index
-  auto status_reserve = merged_index->Reserve(
-      10, std::thread::hardware_concurrency(), std::thread::hardware_concurrency());
 
-  for (const auto& [vector, vertex_id] : *index_a) {
-    auto status = merged_index->Insert(vertex_id, vector);
+  size_t total_max_vectors = 0;
+  for (const auto& index : indexes) {
+    total_max_vectors += index->MaxVectors();
   }
 
-  for (const auto& [vector, vertex_id] : *index_b) {
-    auto status = merged_index->Insert(vertex_id, vector);
+  RETURN_NOT_OK(merged_index->Reserve(
+      total_max_vectors, std::thread::hardware_concurrency(), std::thread::hardware_concurrency()));
+
+  for (const auto& index : indexes) {
+    for (const auto& [vertex_id, vector] : *index) {
+      RETURN_NOT_OK(merged_index->Insert(vertex_id, vector));
+    }
   }
 
   return merged_index;

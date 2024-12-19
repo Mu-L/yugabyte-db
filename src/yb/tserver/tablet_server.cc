@@ -231,9 +231,7 @@ DEFINE_RUNTIME_uint32(ysql_min_new_version_ignored_count, 10,
     "Minimum consecutive number of times that a tserver is allowed to ignore an older catalog "
     "version that is retrieved from a tserver-master heartbeat response.");
 
-DEFINE_test_flag(bool, enable_object_locking_for_table_locks, false,
-                 "The test flag enables a mechanism using which a tserver could serve an object "
-                 "lock request by acquiring corresponding locks at the local TSLocalLockManager.");
+DECLARE_bool(TEST_enable_object_locking_for_table_locks);
 
 DECLARE_bool(enable_pg_cron);
 
@@ -664,10 +662,11 @@ Status TabletServer::RegisterServices() {
         RegisterService(FLAGS_stateful_svc_default_queue_length, std::move(test_echo_service)));
   }
 
-  auto connect_to_pg = [this](const std::string& database_name) {
+  auto connect_to_pg = [this](const std::string& database_name,
+                              const std::optional<CoarseTimePoint>& deadline) {
     return pgwrapper::CreateInternalPGConnBuilder(pgsql_proxy_bind_address(), database_name,
                                                   GetSharedMemoryPostgresAuthKey(),
-                                                  std::nullopt).Connect();
+                                                  deadline).Connect();
   };
   auto pg_auto_analyze_service =
       std::make_shared<stateful_service::PgAutoAnalyzeService>(metric_entity(), client_future(),
@@ -723,28 +722,32 @@ void TabletServer::Shutdown() {
   LOG(INFO) << "TabletServer shutting down...";
 
   bool expected = true;
-  if (initted_.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
-    auto xcluster_consumer = GetXClusterConsumer();
-    if (xcluster_consumer) {
-      xcluster_consumer->Shutdown();
-    }
-
-    maintenance_manager_->Shutdown();
-    WARN_NOT_OK(heartbeater_->Stop(), "Failed to stop TS Heartbeat thread");
-
-    if (FLAGS_tserver_enable_metrics_snapshotter) {
-      WARN_NOT_OK(metrics_snapshotter_->Stop(), "Failed to stop TS Metrics Snapshotter thread");
-    }
-
-    if (pg_table_mutation_count_sender_) {
-      WARN_NOT_OK(pg_table_mutation_count_sender_->Stop(),
-          "Failed to stop table mutation count sender thread");
-    }
-
-    tablet_manager_->StartShutdown();
-    RpcAndWebServerBase::Shutdown();
-    tablet_manager_->CompleteShutdown();
+  if (!initted_.compare_exchange_strong(expected, false, std::memory_order_acq_rel)) {
+    return;
   }
+
+  auto xcluster_consumer = GetXClusterConsumer();
+  if (xcluster_consumer) {
+    xcluster_consumer->Shutdown();
+  }
+
+  maintenance_manager_->Shutdown();
+  WARN_NOT_OK(heartbeater_->Stop(), "Failed to stop TS Heartbeat thread");
+
+  if (FLAGS_tserver_enable_metrics_snapshotter) {
+    WARN_NOT_OK(metrics_snapshotter_->Stop(), "Failed to stop TS Metrics Snapshotter thread");
+  }
+
+  if (pg_table_mutation_count_sender_) {
+    WARN_NOT_OK(pg_table_mutation_count_sender_->Stop(),
+        "Failed to stop table mutation count sender thread");
+  }
+
+  client()->RequestAbortAllRpcs();
+
+  tablet_manager_->StartShutdown();
+  RpcAndWebServerBase::Shutdown();
+  tablet_manager_->CompleteShutdown();
 
   LOG(INFO) << "TabletServer shut down complete. Bye!";
 }

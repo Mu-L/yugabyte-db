@@ -80,17 +80,17 @@ bool YbGetMasterLogicalClientVersionFromTable(Oid db_oid, uint64_t *version)
 	YBCPgStatement ybc_stmt;
 
 	HandleYBStatus(YBCPgNewSelect(Template1DbOid,
-	                              YBLogicalClientVersionRelationId,
-	                              NULL /* prepare_params */,
-	                              false /* is_region_local */,
-	                              &ybc_stmt));
+								  YBLogicalClientVersionRelationId,
+								  NULL /* prepare_params */,
+								  false /* is_region_local */,
+								  &ybc_stmt));
 
 	Datum oid_datum = Int32GetDatum(db_oid);
 	YBCPgExpr pkey_expr = YBCNewConstant(ybc_stmt,
-	                                     oid_attrdesc->atttypid,
-	                                     oid_attrdesc->attcollation,
-	                                     oid_datum,
-	                                     false /* is_null */);
+										 oid_attrdesc->atttypid,
+										 oid_attrdesc->attcollation,
+										 oid_datum,
+										 false /* is_null */);
 
 	HandleYBStatus(YBCPgDmlBindColumn(ybc_stmt, 1, pkey_expr));
 
@@ -195,12 +195,9 @@ YbIncrementMasterDBLogicalClientVersionTableEntryImpl(
 	YBCPgExpr ybc_expr = YBCNewEvalExprCall(update_stmt, (Expr *) expr);
 
 	HandleYBStatus(YBCPgDmlAssignColumn(update_stmt, attnum, ybc_expr));
-	yb_expr = YBCNewColumnRef(update_stmt,
-							  attnum,
-							  INT8OID,
-							  InvalidOid,
-							  &type_attrs);
-	HandleYBStatus(YbPgDmlAppendColumnRef(update_stmt, yb_expr, true));
+	yb_expr = YBCNewColumnRef(
+		update_stmt, attnum, INT8OID, InvalidOid, &type_attrs);
+	YbAppendPrimaryColumnRef(update_stmt, yb_expr);
 
 	int rows_affected_count = 0;
 
@@ -222,7 +219,7 @@ bool YbIncrementMasterLogicalClientVersionTableEntry()
 
 Datum YbGetMasterLogicalClientVersionTableEntryYbctid(Relation logical_client_version_rel,
 												Oid db_oid)
-{	
+{
 	/*
 	 * Construct virtual slot (db_oid, null) for computing ybctid using
 	 * YBCComputeYBTupleIdFromSlot. Note that db_oid is the primary key so we

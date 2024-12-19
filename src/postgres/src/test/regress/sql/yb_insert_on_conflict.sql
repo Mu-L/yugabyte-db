@@ -155,8 +155,7 @@ SELECT * FROM ioc_defaults ORDER BY b, c;
 DROP INDEX ioc_defaults_b_idx;
 TRUNCATE ioc_defaults;
 
---- Nulls
--- NULLS DISTINCT
+--- NULLS DISTINCT
 CREATE UNIQUE INDEX NONCONCURRENTLY ah_idx ON ab_tab (a HASH);
 INSERT INTO ab_tab VALUES (null, null);
 INSERT INTO ab_tab VALUES (null, null) ON CONFLICT DO NOTHING;
@@ -174,34 +173,41 @@ DELETE FROM ab_tab WHERE a IS null;
 DROP INDEX ioc_defaults_bc_idx;
 TRUNCATE ioc_defaults;
 
--- NULLS NOT DISTINCT
-DROP INDEX ah_idx;
-CREATE UNIQUE INDEX NONCONCURRENTLY ah_idx ON ab_tab (a HASH) NULLS NOT DISTINCT;
-INSERT INTO ab_tab VALUES (123, null), (456, null) ON CONFLICT DO NOTHING;
-INSERT INTO ab_tab VALUES (null, null);
-INSERT INTO ab_tab VALUES (null, null) ON CONFLICT DO NOTHING;
--- Multiple rows with NULL values should semantically be treated as the same logical row.
-INSERT INTO ab_tab VALUES (null, 1), (null, 2) ON CONFLICT DO NOTHING;
-INSERT INTO ab_tab VALUES (null, 1), (null, 2) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
-SELECT * FROM ab_tab WHERE a IS NULL ORDER BY b;
-DELETE FROM ab_tab;
--- Similarly, columns with default NULL values should be treated as the same logical row.
+--- NULLS NOT DISTINCT
+CREATE TABLE ab_tab2 (a int, b int);
+CREATE UNIQUE INDEX NONCONCURRENTLY ah_idx2 ON ab_tab2 (a HASH) NULLS NOT DISTINCT;
+INSERT INTO ab_tab2 VALUES (null, 1);
+INSERT INTO ab_tab2 VALUES (null, 2) ON CONFLICT DO NOTHING;
+SELECT * FROM ab_tab2;
+INSERT INTO ab_tab2 VALUES (null, 3) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
+SELECT * FROM ab_tab2;
+INSERT INTO ab_tab2 VALUES (null, 4), (null, 5) ON CONFLICT DO NOTHING;
+SELECT * FROM ab_tab2;
+INSERT INTO ab_tab2 VALUES (null, 6), (null, 7) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
+SELECT * FROM ab_tab2 ORDER BY a, b;
+INSERT INTO ab_tab2 VALUES (null, 8), (null, 9) ON CONFLICT (a) DO UPDATE SET a = EXCLUDED.b;
+SELECT * FROM ab_tab2 ORDER BY a, b;
+INSERT INTO ab_tab2 VALUES (null, 10), (null, 11), (null, 12) ON CONFLICT (a) DO UPDATE SET a = EXCLUDED.b;
+SELECT * FROM ab_tab2 ORDER BY a, b;
+DROP TABLE ab_tab2;
+-- Index key attributes > 1
+CREATE TABLE abc_tab (a int, b int, c int);
+CREATE UNIQUE INDEX NONCONCURRENTLY abh_idx ON abc_tab ((a, b) HASH) NULLS NOT DISTINCT;
+INSERT INTO abc_tab VALUES (123, null, 1), (456, null, 1), (null, null, 1);
+INSERT INTO abc_tab VALUES (123, null, 2), (456, null, 2), (null, null, 2) ON CONFLICT DO NOTHING;
+SELECT * FROM abc_tab ORDER BY a, b;
+INSERT INTO abc_tab VALUES (123, null, 2), (456, null, 2), (null, null, 2) ON CONFLICT (a, b) DO UPDATE SET c = EXCLUDED.c;
+SELECT * FROM abc_tab ORDER BY a, b;
+DROP TABLE abc_tab;
+-- Default NULL values
 CREATE UNIQUE INDEX NONCONCURRENTLY ioc_defaults_bc_idx ON ioc_defaults (b, c) NULLS NOT DISTINCT;
 INSERT INTO ioc_defaults VALUES (1);
-INSERT INTO ioc_defaults VALUES (2), (3) ON CONFLICT (b, c) DO UPDATE SET a = EXCLUDED.a;
-SELECT * FROM ioc_defaults ORDER BY b, c;
--- Reset.
+INSERT INTO ioc_defaults VALUES (2) ON CONFLICT (b, c) DO UPDATE SET a = EXCLUDED.a;
+SELECT * FROM ioc_defaults;
+INSERT INTO ioc_defaults VALUES (3), (4) ON CONFLICT (b, c) DO UPDATE SET a = EXCLUDED.a;
+SELECT * FROM ioc_defaults ORDER BY a;
 DROP INDEX ioc_defaults_bc_idx;
 TRUNCATE ioc_defaults;
-
--- Index key attributes > 1
-CREATE TABLE ab_tab2 (a int, b int);
-CREATE UNIQUE INDEX NONCONCURRENTLY ah_idx2 ON ab_tab2 ((a, b) HASH) NULLS NOT DISTINCT;
-INSERT INTO ab_tab2 VALUES (123, null), (456, null) ON CONFLICT DO NOTHING;
-INSERT INTO ab_tab2 VALUES (null, null);
-INSERT INTO ab_tab2 VALUES (123, null), (456, null), (null, 5), (null, null) ON CONFLICT DO NOTHING;
-SELECT * FROM ab_tab2 ORDER BY a, b;
-DELETE FROM ab_tab2;
 
 --- Partitioned table
 CREATE TABLE pp (i serial, j int, UNIQUE (j)) PARTITION BY RANGE (j);
@@ -218,8 +224,10 @@ BEGIN;
 INSERT INTO pp (j) SELECT g * 7 % 40 FROM generate_series(1, 40) g ON CONFLICT DO NOTHING;
 SELECT * FROM pp ORDER BY i;
 ABORT;
+BEGIN;
 INSERT INTO pp (j) SELECT g * 7 % 40 FROM generate_series(1, 40) g ON CONFLICT (j) DO UPDATE SET i = EXCLUDED.i + 100;
 SELECT * FROM pp ORDER BY i % 100;
+ABORT;
 
 --- Partitioned table with TEXT partition key
 CREATE TABLE staff (id SERIAL, name TEXT, department TEXT, PRIMARY KEY (name HASH, department ASC)) PARTITION BY LIST (department);
@@ -361,6 +369,23 @@ CREATE TABLE index_update (a int PRIMARY KEY, b int);
 INSERT INTO index_update VALUES (1, 2);
 INSERT INTO index_update VALUES (1, 3) ON CONFLICT (a) DO UPDATE SET b = EXCLUDED.b;
 
+--- Before row triggers
+CREATE OR REPLACE FUNCTION loggingfunc() RETURNS trigger AS $$
+    DECLARE
+        count int;
+    BEGIN
+        SELECT count(*) INTO count FROM pp;
+        RAISE NOTICE '% % % % i=% count=%', TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, new.i, count;
+    RETURN NEW;
+    END;
+$$ LANGUAGE plpgsql;
+-- Trigger on parent table should disable batching for child tables.
+CREATE TRIGGER loggingtrig BEFORE INSERT ON pp FOR EACH ROW EXECUTE PROCEDURE loggingfunc();
+BEGIN;
+INSERT INTO pp (j) SELECT g * 19 % 40 FROM generate_series(1, 5) g ON CONFLICT DO NOTHING;
+SELECT * FROM pp ORDER BY i;
+ABORT;
+
 --- After row triggers
 CREATE TABLE trigger_test (i int2, PRIMARY KEY (i ASC));
 -- This test is derived from TestPgUpdatePrimaryKey.java.
@@ -419,7 +444,56 @@ TABLE with_a;
 ABORT;
 BEGIN;
 WITH w(i) AS (
+    INSERT INTO with_a VALUES (11) RETURNING i
+) INSERT INTO with_a VALUES (generate_series(10, 15)) ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + (SELECT i FROM w);
+TABLE with_a;
+ABORT;
+BEGIN;
+WITH w(i) AS (
     DELETE FROM with_a WHERE i = 10 RETURNING i
 ) INSERT INTO with_a VALUES (generate_series(9, 15)) ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + (SELECT i FROM w);
 TABLE with_a;
 ABORT;
+BEGIN;
+WITH w(i) AS (
+    INSERT INTO with_a VALUES (generate_series(6, 11)) ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + 100 RETURNING i
+) INSERT INTO with_a SELECT CASE
+    WHEN u < 12 THEN u
+    WHEN u < 14 THEN -(u + (SELECT max(i) FROM w))
+    ELSE u
+    END FROM generate_series(9, 15) u ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + 10;
+TABLE with_a;
+ABORT;
+BEGIN;
+WITH w(i) AS (
+    INSERT INTO with_a VALUES (generate_series(6, 10)) ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + 100 RETURNING i
+) INSERT INTO with_a SELECT CASE
+    WHEN u < 11 THEN u
+    WHEN u < 13 THEN -(u + (SELECT max(i) FROM w))
+    ELSE u
+    END FROM generate_series(10, 15) u ON CONFLICT (i) DO UPDATE SET i = EXCLUDED.i + 10;
+TABLE with_a;
+ABORT;
+
+--- GH-25070
+CREATE TABLE main (a INT, b TEXT, PRIMARY KEY (a, b));
+CREATE TABLE copy (a INT, b TEXT, PRIMARY KEY (b, a));
+INSERT INTO main (SELECT i, 'name_' || i FROM generate_series(1, 10) AS i);
+INSERT INTO copy (SELECT a, b FROM main) ON CONFLICT DO NOTHING;
+TABLE copy ORDER BY a;
+INSERT INTO copy (SELECT a, b FROM main) ON CONFLICT (b, a) DO UPDATE SET b = 'replaced_' || EXCLUDED.b;
+TABLE copy ORDER BY a;
+
+--- GH-25296
+CREATE TABLE dupidx (a int);
+CREATE UNIQUE INDEX ON dupidx (a);
+CREATE UNIQUE INDEX ON dupidx (a);
+INSERT INTO dupidx VALUES (1);
+INSERT INTO dupidx VALUES (1) ON CONFLICT DO NOTHING;
+TABLE dupidx;
+CREATE TABLE multidx (a int, b int);
+CREATE UNIQUE INDEX ON multidx (a);
+CREATE UNIQUE INDEX ON multidx (b);
+INSERT INTO multidx VALUES (1, 2);
+INSERT INTO multidx VALUES (1, 2) ON CONFLICT DO NOTHING;
+TABLE multidx;

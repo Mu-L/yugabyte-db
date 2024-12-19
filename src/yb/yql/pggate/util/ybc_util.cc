@@ -483,8 +483,14 @@ const char* YBCGetWaitEventType(uint32_t wait_event_info) {
   return NoPrefixName(GetWaitStateType(static_cast<ash::WaitStateCode>(wait_event)));
 }
 
-uint8_t YBCGetQueryIdForCatalogRequests() {
-  return static_cast<uint8_t>(ash::FixedQueryId::kQueryIdForCatalogRequests);
+uint8_t YBCGetConstQueryId(YBCAshConstQueryIdType type) {
+  switch (type) {
+    case YBCAshConstQueryIdType::QUERY_ID_TYPE_DEFAULT:
+      return static_cast<uint8_t>(ash::FixedQueryId::kQueryIdForUncomputedQueryId);
+    case YBCAshConstQueryIdType::QUERY_ID_TYPE_BACKGROUND_WORKER:
+      return static_cast<uint8_t>(ash::FixedQueryId::kQueryIdForYSQLBackgroundWorker);
+  }
+  FATAL_INVALID_ENUM_VALUE(YBCAshConstQueryIdType, type);
 }
 
 uint32_t YBCWaitEventForWaitingOnTServer() {
@@ -520,6 +526,10 @@ const char* YBCGetPggateRPCName(uint32_t pggate_rpc_enum_value) {
 
 int YBCGetCallStackFrames(void** result, int max_depth, int skip_count) {
   return google::GetStackTrace(result, max_depth, skip_count);
+}
+
+bool YBCIsNonColocatedYbctidsOnlyFetch(const YBCPgPrepareParameters *params) {
+  return params->fetch_ybctids_only && !params->querying_colocated_table;
 }
 
 } // extern "C"

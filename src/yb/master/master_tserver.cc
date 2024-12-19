@@ -67,14 +67,11 @@ const scoped_refptr<MetricEntity>& MasterTabletServer::MetricEnt() const {
 
 Result<tablet::TabletPeerPtr> MasterTabletServer::GetServingTablet(
     const TabletId& tablet_id) const {
-  return GetServingTablet(Slice(tablet_id));
+  return master_->catalog_manager()->GetServingTablet(tablet_id);
 }
 
 Result<tablet::TabletPeerPtr> MasterTabletServer::GetServingTablet(const Slice& tablet_id) const {
-  if (tablet_id == kSysCatalogTabletId) {
-    return master_->catalog_manager()->tablet_peer();
-  }
-  return STATUS_FORMAT(NotFound, "Tablet $0 not found", tablet_id);
+  return master_->catalog_manager()->GetServingTablet(tablet_id);
 }
 
 Status MasterTabletServer::GetTabletStatus(const tserver::GetTabletStatusRequestPB* req,
@@ -231,6 +228,10 @@ Result<pgwrapper::PGConn> MasterTabletServer::CreateInternalPGConn(
 
 bool MasterTabletServer::SkipCatalogVersionChecks() {
   return master_->catalog_manager()->SkipCatalogVersionChecks();
+}
+
+const std::string& MasterTabletServer::permanent_uuid() const {
+  return master_->permanent_uuid();
 }
 
 } // namespace master

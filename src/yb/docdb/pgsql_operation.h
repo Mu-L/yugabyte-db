@@ -108,9 +108,19 @@ class PgsqlWriteOperation :
 
   class RowPackContext;
 
+  template <typename Value>
+  Status DoInsertColumn(
+      const DocOperationApplyData& data, ColumnId column_id, const ColumnSchema& column,
+      Value&& column_value, RowPackContext* pack_context);
+
   Status InsertColumn(
       const DocOperationApplyData& data, const PgsqlColumnValuePB& column_value,
       RowPackContext* pack_context);
+
+  template <typename Value>
+  Status DoUpdateColumn(
+      const DocOperationApplyData& data, ColumnId column_id, const ColumnSchema& column,
+      Value&& value, RowPackContext* pack_context);
 
   Status UpdateColumn(
       const DocOperationApplyData& data, const dockv::PgTableRow& table_row,
@@ -194,7 +204,7 @@ class PgsqlReadOperation : public DocExprExecutor {
 
   // Execute a READ operator for a given batch of keys.
   template <class KeyProvider>
-  Result<size_t> ExecuteBatchKeys(KeyProvider& key_provider, bool use_indexed_table = false);
+  Result<size_t> ExecuteBatchKeys(KeyProvider& key_provider);
 
   Result<std::tuple<size_t, bool>> ExecuteSample();
 
@@ -212,8 +222,7 @@ class PgsqlReadOperation : public DocExprExecutor {
   Result<bool> SetPagingState(
       YQLRowwiseIteratorIf* iter, const Schema& schema, const ReadHybridTime& read_time);
 
-  Result<size_t> ExecuteVectorLSMSearch(
-      const DocReadContext& doc_read_context, const PgVectorReadOptionsPB& options);
+  Result<size_t> ExecuteVectorLSMSearch(const PgVectorReadOptionsPB& options);
 
   void InitTargetEncoders(
       const google::protobuf::RepeatedPtrField<PgsqlExpressionPB>& targets,
@@ -231,10 +240,53 @@ class PgsqlReadOperation : public DocExprExecutor {
   YQLRowwiseIteratorIf::UniPtr index_iter_;
   uint64_t scanned_table_rows_ = 0;
   uint64_t scanned_index_rows_ = 0;
+  Status delayed_failure_;
 };
 
 Status GetIntents(
     const PgsqlReadRequestPB& request, const Schema& schema, IsolationLevel level,
     LWKeyValueWriteBatchPB* out);
+
+class PgsqlLockOperation :
+    public DocOperationBase<DocOperationType::PGSQL_LOCK_OPERATION, PgsqlLockRequestPB> {
+ public:
+  PgsqlLockOperation(std::reference_wrapper<const PgsqlLockRequestPB> request,
+                     const TransactionOperationContext& txn_op_context);
+
+  bool RequireReadSnapshot() const override {
+    return false;
+  }
+
+  const PgsqlLockRequestPB& request() const { return request_; }
+  PgsqlResponsePB* response() const { return response_; }
+
+  // Init doc_key_ and encoded_doc_key_.
+  Status Init(PgsqlResponsePB* response, const DocReadContextPtr& doc_read_context);
+
+  Status Apply(const DocOperationApplyData& data) override;
+
+  // Reading path to operate on.
+  Status GetDocPaths(GetDocPathsMode mode,
+                     DocPathsToLock *paths,
+                     IsolationLevel *level) const override;
+
+  std::string ToString() const override;
+
+  dockv::IntentTypeSet GetIntentTypes(IsolationLevel isolation_level) const override;
+
+ private:
+  void ClearResponse() override;
+
+  Result<bool> LockExists(const DocOperationApplyData& data);
+
+  const TransactionOperationContext txn_op_context_;
+
+  // Input arguments.
+  PgsqlResponsePB* response_ = nullptr;
+
+  // The key of the advisory lock to be locked.
+  dockv::DocKey doc_key_;
+  RefCntPrefix encoded_doc_key_;
+};
 
 }  // namespace yb::docdb

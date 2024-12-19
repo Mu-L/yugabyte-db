@@ -133,10 +133,10 @@ CreateTableGroup(CreateTableGroupStmt *stmt)
 	 * Check that there is no other tablegroup by this name.
 	 */
 	if (OidIsValid(get_tablegroup_oid(stmt->tablegroupname, true)))
-			ereport(ERROR,
-					(errcode(ERRCODE_DUPLICATE_OBJECT),
-					 errmsg("tablegroup \"%s\" already exists",
-					 		stmt->tablegroupname)));
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("tablegroup \"%s\" already exists",
+						stmt->tablegroupname)));
 
 	if (stmt->owner)
 		owneroid = get_rolespec_oid(stmt->owner, false);
@@ -182,14 +182,12 @@ CreateTableGroup(CreateTableGroupStmt *stmt)
 	nulls[Anum_pg_yb_tablegroup_grpoptions - 1] = true;
 
 	/*
-	 * If YB binary restore mode is set, we want to use the specified tablegroup
-	 * oid stored in binary_upgrade_next_tablegroup_oid instead of generating
-	 * an oid when inserting the tuple into pg_yb_tablegroup catalog.
-	 * YB binary restore mode is similar to PG binary upgrade mode. However, in
-	 * YB binary restore mode, we only expecte oids of few types of DB objects
-	 * (tablegroup, type, etc) to be set.
+	 * When inserting the tuple into the pg_yb_tablegroup catalog, if YB binary
+	 * restore mode or binary upgrade mode is set, use the specified tablegroup
+	 * oid stored in binary_upgrade_next_tablegroup_oid instead of generating a
+	 * new oid.
 	 */
-	if (yb_binary_restore)
+	if (yb_binary_restore || IsBinaryUpgrade)
 	{
 		/*
 		 * The reason to comment out the check below is mainly for supporting
@@ -302,7 +300,7 @@ get_tablegroup_oid(const char *tablegroupname, bool missing_ok)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("tablegroup \"%s\" does not exist",
-				 		tablegroupname)));
+						tablegroupname)));
 
 	return result;
 }
@@ -393,12 +391,10 @@ RemoveTablegroupById(Oid grp_oid, bool remove_implicit)
 
 	/* If the tablegroup exists, then remove it, otherwise raise an error. */
 	if (!HeapTupleIsValid(tuple))
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("tablegroup with oid %u does not exist",
-				 		grp_oid)));
-	}
+						grp_oid)));
 
 	/* DROP hook for the tablegroup being removed */
 	InvokeObjectDropHook(YbTablegroupRelationId, grp_oid, 0);

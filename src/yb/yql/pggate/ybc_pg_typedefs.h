@@ -396,6 +396,7 @@ typedef struct PgGFlagsAccessor {
   const bool*     ysql_enable_create_database_oid_collision_retry;
   const char*     ysql_catalog_preload_additional_table_list;
   const bool*     ysql_use_relcache_file;
+  const bool*     ysql_use_optimized_relcache_update;
   const bool*     ysql_enable_pg_per_database_oid_allocator;
   const bool*     ysql_enable_db_catalog_version_mode;
   const bool*     TEST_ysql_hide_catalog_version_increment_log;
@@ -405,6 +406,9 @@ typedef struct PgGFlagsAccessor {
   const bool*     TEST_ysql_enable_db_logical_client_version_mode;
   const bool*     ysql_conn_mgr_superuser_sticky;
   const bool*     TEST_ysql_log_perdb_allocated_new_objectid;
+  const bool*     ysql_conn_mgr_version_matching;
+  const bool*     ysql_conn_mgr_version_matching_connect_higher_version;
+  const bool*     ysql_block_dangerous_roles;
 } YBCPgGFlagsAccessor;
 
 typedef struct YbTablePropertiesData {
@@ -759,6 +763,11 @@ typedef struct WaitEventDescriptor {
   const char *description;
 } YBCWaitEventDescriptor;
 
+typedef enum AshConstQueryIdType {
+  QUERY_ID_TYPE_DEFAULT,
+  QUERY_ID_TYPE_BACKGROUND_WORKER
+} YBCAshConstQueryIdType;
+
 typedef struct YBCBindColumn {
   int attr_num;
   const YBCPgTypeEntity* type_entity;
@@ -863,6 +872,18 @@ typedef enum YbInsertOnConflictKeyState {
   KEY_READ,
   KEY_JUST_INSERTED,
 } YBCPgInsertOnConflictKeyState;
+
+typedef struct {
+  uint32_t database_id;
+  uint32_t classid;
+  uint32_t objid;
+  uint32_t objsubid;
+} YBAdvisoryLockId;
+
+typedef enum YBAdvisoryLockMode {
+  YB_ADVISORY_LOCK_SHARED,
+  YB_ADVISORY_LOCK_EXCLUSIVE
+} YBAdvisoryLockMode;
 
 #ifdef __cplusplus
 }  // extern "C"

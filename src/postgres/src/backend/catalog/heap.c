@@ -1136,7 +1136,7 @@ YbSetInitdbPermissions(Oid relid, char relkind, bool relisshared)
 		ACL_MODECHG_EQL, BOOTSTRAP_SUPERUSERID, DROP_RESTRICT);
 
 	Acl *superuser_default =
-	    acldefault(relkind == RELKIND_SEQUENCE ? OBJECT_SEQUENCE
+		acldefault(relkind == RELKIND_SEQUENCE ? OBJECT_SEQUENCE
 											   : OBJECT_TABLE,
 				   BOOTSTRAP_SUPERUSERID);
 
@@ -1401,7 +1401,7 @@ heap_create_with_catalog(const char *relname,
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 				 errmsg("unsuppored reloptions were used for a system table "
-				        "during YSQL upgrade"),
+						"during YSQL upgrade"),
 				 errhint("Only a small subset is allowed due to BKI restrictions.")));
 	}
 
@@ -1667,7 +1667,10 @@ heap_create_with_catalog(const char *relname,
 
 	/* Increment sticky object count if the object is a TEMP TABLE. */
 	if (YbIsClientYsqlConnMgr() && new_rel_desc->rd_islocaltemp)
+	{
+		elog(LOG, "Incrementing sticky object count for TEMP TABLE %s", relname);
 		increment_sticky_object_count();
+	}
 
 	/*
 	 * ok, the relation has been cataloged, so close our relations and return
@@ -1863,7 +1866,7 @@ RemoveAttributeById(Oid relid, AttrNumber attnum)
 	}
 	else
 	{
-	    /* Dropping user attributes is lots harder */
+		/* Dropping user attributes is lots harder */
 
 		/* Mark the attribute as dropped */
 		attStruct->attisdropped = true;
@@ -2052,10 +2055,6 @@ heap_drop_with_catalog(Oid relid)
 	if (relid == defaultPartOid)
 		update_default_partition_oid(parentOid, InvalidOid);
 
-	/* Decrement sticky object count if the relation being dropped is a TEMP TABLE. */
-	if (YbIsClientYsqlConnMgr() && (rel)->rd_islocaltemp)
-		decrement_sticky_object_count();
-	
 	/*
 	 * Schedule unlinking of the relation's physical files at commit.
 	 * For Yugabyte-backed relations, there aren't any physical files to remove.
