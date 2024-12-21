@@ -1548,7 +1548,7 @@ pg_get_indexdef_worker(Oid indexrelid, int colno,
 		appendStringInfoChar(&buf, ')');
 
 		if (includeYbMetadata && IsYBRelation(indexrel) &&
-			!YBIsCoveredByMainTable(indexrel))
+			!idxrec->indisprimary)
 		{
 			YbAppendIndexReloptions(&buf, indexrelid, YbGetTableProperties(indexrel));
 		}
@@ -3775,9 +3775,10 @@ deparse_expression(Node *expr, List *dpcontext,
 									 showimplicit, 0, 0);
 }
 
-char *yb_deparse_expression(Node *expr, List *dpcontext,
-				   			bool forceprefix, bool showimplicit,
-							bool verbose)
+char *
+yb_deparse_expression(Node *expr, List *dpcontext,
+					  bool forceprefix, bool showimplicit,
+					  bool verbose)
 {
 	return deparse_expression_pretty(expr, dpcontext, forceprefix,
 									 showimplicit,

@@ -2026,7 +2026,8 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
           commit_records = count[7];
           dml_records =
               count[1] + count[2] + count[3] + count[5];  // INSERT + UPDATE + DELETE + TRUNCATE
-          LOG(INFO) << "Total Received records for stream " << resp.records.size();
+          LOG(INFO) << "Total received records for stream " << resp.records.size()
+                    << " out of which DML records are: " << dml_records;
           uint64_t restart_lsn = 0;
           uint64_t confirmed_flush_lsn = 0;
           bool send_feedback = false;
@@ -2802,7 +2803,7 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
               continue;
             }
 
-            if (row.checkpoint == OpId::Max()) {
+            if (*row.checkpoint == OpId::Max()) {
               continue;
             }
 
@@ -3670,7 +3671,8 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
     ValidateColumnCounts(change_resp, 2);
   }
 
-  void CDCSDKYsqlTest::WaitForCompaction(YBTableName table) {
+  void CDCSDKYsqlTest::WaitForCompaction(
+      YBTableName table, bool expect_equal_entries_after_compaction) {
     auto peers = ListTabletPeers(test_cluster(), ListPeersFilter::kLeaders);
     int count_before_compaction = CountEntriesInDocDB(peers, table.table_id());
     int count_after_compaction = 0;
@@ -3681,10 +3683,9 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
           return false;
         }
         count_after_compaction = CountEntriesInDocDB(peers, table.table_id());
-        if (count_after_compaction < count_before_compaction) {
-          return true;
-        }
-        return false;
+        return (expect_equal_entries_after_compaction &&
+                count_before_compaction == count_after_compaction) ||
+               count_after_compaction < count_before_compaction;
       },
       MonoDelta::FromSeconds(60), "Expected compaction did not happen"));
     LOG(INFO) << "count_before_compaction: " << count_before_compaction

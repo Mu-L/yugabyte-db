@@ -129,6 +129,119 @@ TEST_F(CDCSDKConsumptionConsistentChangesTest, TestExplicitCheckpointForSingleSh
   CheckRecordCount(get_consistent_changes_resp, expected_dml_records);
 }
 
+TEST_F(
+    CDCSDKConsumptionConsistentChangesTest, TestMajorityReplicatedIndexPresentInClosedWalSegment) {
+  int num_tservers = 3;
+  int tablet_split_range_value = 10;
+  ASSERT_OK(SetUpWithParams(num_tservers, 1, false, true));
+  auto conn = ASSERT_RESULT(test_cluster_.ConnectToDB(kNamespaceName));
+  ASSERT_OK(conn.ExecuteFormat(
+      "CREATE TABLE test1 (id int, value_1 int, PRIMARY KEY (ID ASC)) SPLIT AT VALUES "
+      "(($0))",
+      tablet_split_range_value));
+  auto table = ASSERT_RESULT(GetTable(&test_cluster_, kNamespaceName, "test1"));
+  google::protobuf::RepeatedPtrField<master::TabletLocationsPB> tablets;
+  ASSERT_OK(test_client()->GetTablets(table, 0, &tablets, nullptr));
+  ASSERT_EQ(tablets.size(), 2);
+  std::unordered_map<TabletId, master::TabletLocationsPB> tablets_locations_map;
+  for (const auto& tablet : tablets) {
+    tablets_locations_map[tablet.tablet_id()] = tablet;
+  }
+  xrepl::StreamId stream_id = ASSERT_RESULT(CreateConsistentSnapshotStreamWithReplicationSlot());
+
+  auto conn1 = ASSERT_RESULT(test_cluster_.ConnectToDB(kNamespaceName));
+
+  // Perform 1 insert each on both the tablets and consume them so that the from_op_id moves past
+  // the initial DDL record on both the tablets. This is required so that the response safe time
+  // does not get set to the commit_time of this record as it is a relevant record for CDC.
+  ASSERT_OK(conn1.ExecuteFormat("INSERT INTO test1 VALUES (0, 0)"));
+  ASSERT_OK(conn1.ExecuteFormat("INSERT INTO test1 VALUES ($0, $0)", tablet_split_range_value));
+
+  ASSERT_OK(InitVirtualWAL(stream_id, {table.table_id()}, kVWALSessionId1));
+  int expected_dml_records = 2;
+  auto get_consistent_changes_resp = ASSERT_RESULT(GetAllPendingTxnsFromVirtualWAL(
+      stream_id, {table.table_id()}, expected_dml_records, false /* init_virtual_wal */,
+      kVWALSessionId1));
+  LOG(INFO) << "Got " << get_consistent_changes_resp.records.size() << " records.";
+  // 2 * (BEGIN + DML + COMMIT )
+  ASSERT_EQ(get_consistent_changes_resp.records.size(), 6);
+
+  // We require some new WAL OPs on tablet-1 that are non-relevant to CDC. Hence, perform a txn on
+  // tablet-1 and abort it. All WAL OPs related to this aborted txn will be read but will be
+  // filtered out as they are not relevant for CDC.
+  int inserts_per_tablet = 4;
+  ASSERT_OK(conn1.Execute("BEGIN"));
+  for (int i = 1; i <= inserts_per_tablet; i++) {
+    ASSERT_OK(conn1.ExecuteFormat("INSERT INTO test1 VALUES ($0, $1)", i, i));
+  }
+  ASSERT_OK(conn1.Execute("ABORT"));
+
+  // Explicitly rollover on tablet-1 where the above aborted txn was performed. This is done so that
+  // the majority replicated opid & committed opid remains in segment-1 but active segment number
+  // points to segment-2.
+  // On tablet-1, WAL segment-1 should look as follows:
+  // 1.2 CHANGE METADATA OP
+  // 1.3 WRITE OP (single-shard txn)
+  // 1.4 WRITE OP (aborted multi-shard txn)
+  // 1.5 WRITE OP (aborted multi-shard txn)
+  // 1.6 WRITE OP (aborted multi-shard txn)
+  // 1.7 WRITE OP (aborted multi-shard txn)
+  log::SegmentSequence segments;
+  for (int i = 0; i < num_tservers; i++) {
+    for (const auto& peer : test_cluster()->GetTabletPeers(i)) {
+      auto tablet_id = peer->tablet_id();
+      auto raft_consensus = ASSERT_RESULT(peer->GetRaftConsensus());
+      if (tablets_locations_map.contains(tablet_id)) {
+        auto txn_participant = ASSERT_RESULT(peer->shared_tablet_safe())->transaction_participant();
+        ASSERT_OK(WaitFor(
+            [&]() -> Result<bool> {
+              if (txn_participant->GetNumRunningTransactions() == 0) {
+                return true;
+              }
+              return false;
+            },
+            MonoDelta::FromSeconds(60), "Timed out waiting for running txns reduce to 0"));
+        auto committed_op_id_index = raft_consensus->GetLastCommittedOpId().index;
+        if (committed_op_id_index >= 7) {
+          LOG(INFO) << "Aborted transactions performed on tablet_id: " << tablet_id;
+          ASSERT_OK(peer->log()->AllocateSegmentAndRollOver());
+          ASSERT_OK(WaitFor(
+              [&]() -> Result<bool> {
+                auto active_segment_number = peer->log()->active_segment_sequence_number();
+                RETURN_NOT_OK(peer->log()->GetSegmentsSnapshot(&segments));
+                if (active_segment_number == 2 && segments.size() == 2) {
+                  return true;
+                }
+                return false;
+              },
+              MonoDelta::FromSeconds(60),
+              "Timed out waiting for active segment number to increment"));
+        }
+      }
+    }
+  }
+
+  // Perform inserts on tablet-2.
+  for (int j = tablet_split_range_value + 1; j <= (tablet_split_range_value + inserts_per_tablet);
+       j++) {
+    ASSERT_OK(conn1.ExecuteFormat("INSERT INTO test1 VALUES ($0, $1)", j, j));
+  }
+
+  // We should receive the inserts performed on tablet-2.
+  expected_dml_records = inserts_per_tablet;
+  get_consistent_changes_resp = ASSERT_RESULT(GetAllPendingTxnsFromVirtualWAL(
+      stream_id, {table.table_id()}, expected_dml_records, false /* init_virtual_wal */,
+      kVWALSessionId1));
+  LOG(INFO) << "Got " << get_consistent_changes_resp.records.size() << " records.";
+
+  auto last_record =
+      get_consistent_changes_resp.records[get_consistent_changes_resp.records.size() - 1];
+  VerifyLastRecordAndProgressOnSlot(stream_id, last_record);
+
+  CheckRecordsConsistencyFromVWAL(get_consistent_changes_resp.records);
+  CheckRecordCount(get_consistent_changes_resp, expected_dml_records, 0, 4);
+}
+
 TEST_F(CDCSDKConsumptionConsistentChangesTest, TestExplicitCheckpointForMultiShardTxn) {
   ANNOTATE_UNPROTECTED_WRITE(FLAGS_cdcsdk_vwal_getchanges_resp_max_size_bytes) = 100_KB;
   ANNOTATE_UNPROTECTED_WRITE(FLAGS_cdc_state_checkpoint_update_interval_ms) = 0;
@@ -3545,6 +3658,81 @@ TEST_F(CDCSDKConsumptionConsistentChangesTest, TestColocationWithIndexes) {
   for (auto record : change_resp.cdc_sdk_proto_records()) {
     ASSERT_EQ(record.row_message().op(), RowMessage_Op_SAFEPOINT);
   }
+}
+
+TEST_F(CDCSDKConsumptionConsistentChangesTest, TestCompactionWithReplicaIdentityDefault) {
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_update_min_cdc_indices_interval_secs) = 1;
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_cdc_state_checkpoint_update_interval_ms) = 0;
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_timestamp_history_retention_interval_sec) = 0;
+  ASSERT_OK(SetUpWithParams(
+      /* replication_factor */ 3, /* num_masters */ 1, /* colocated */ false,
+      /* cdc_populate_safepoint_record */ true));
+  auto table = ASSERT_RESULT(CreateTable(&test_cluster_, kNamespaceName, kTableName));
+  google::protobuf::RepeatedPtrField<master::TabletLocationsPB> tablets;
+  ASSERT_OK(test_client()->GetTablets(table, 0, &tablets, nullptr));
+  ASSERT_EQ(tablets.size(), 1);
+
+  auto conn = ASSERT_RESULT(test_cluster_.ConnectToDB(kNamespaceName));
+  ASSERT_OK(conn.Execute("ALTER TABLE test_table REPLICA IDENTITY DEFAULT"));
+
+  xrepl::StreamId stream_id = ASSERT_RESULT(CreateConsistentSnapshotStreamWithReplicationSlot());
+  auto expected_row = ReadFromCdcStateTable(stream_id, tablets[0].tablet_id());
+  if (!expected_row.ok()) {
+    FAIL();
+  }
+  ASSERT_GE((*expected_row).op_id.term, 0);
+  ASSERT_GE((*expected_row).op_id.index, 0);
+  ASSERT_NE((*expected_row).cdc_sdk_safe_time, HybridTime::kInvalid);
+  ASSERT_GE((*expected_row).cdc_sdk_latest_active_time, 0);
+
+  // Assert that the safe time is not invalid in the tablet_peers
+  AssertSafeTimeAsExpectedInTabletPeers(tablets[0].tablet_id(), (*expected_row).cdc_sdk_safe_time);
+
+  ASSERT_OK(WriteRows(1 /* start */, 2 /* end */, &test_cluster_));
+  ASSERT_OK(InitVirtualWAL(stream_id, {table.table_id()}, kVWALSessionId1));
+  int expected_dml_records = 1;
+  auto get_consistent_changes_resp = ASSERT_RESULT(GetAllPendingTxnsFromVirtualWAL(
+      stream_id, {table.table_id()}, expected_dml_records, false /* init_virtual_wal */,
+      kVWALSessionId1));
+  LOG(INFO) << "Got " << get_consistent_changes_resp.records.size() << " records.";
+  // (BEGIN + DML + COMMIT )
+  ASSERT_EQ(get_consistent_changes_resp.records.size(), 3);
+
+  // Additional call to send explicit checkpoint
+  auto resp = ASSERT_RESULT(GetConsistentChangesFromCDC(stream_id, kVWALSessionId1));
+  ASSERT_EQ(resp.cdc_sdk_proto_records_size(), 0);
+
+  ASSERT_OK(UpdateRows(1 /* key */, 6 /* value */, &test_cluster_));
+  ASSERT_OK(UpdateRows(1 /* key */, 10 /* value */, &test_cluster_));
+  LOG(INFO) << "Sleep for UpdatePeersAndMetrics to move barriers";
+  SleepFor(MonoDelta::FromSeconds(2 * FLAGS_update_min_cdc_indices_interval_secs));
+  auto peers = ListTabletPeers(test_cluster(), ListPeersFilter::kLeaders);
+  auto count_before_compaction = CountEntriesInDocDB(peers, table.table_id());
+  int count_after_compaction;
+  ASSERT_NOK(WaitFor(
+      [&]() {
+        auto result = test_cluster_.mini_cluster_->CompactTablets();
+        if (!result.ok()) {
+          return false;
+        }
+        count_after_compaction = CountEntriesInDocDB(peers, table.table_id());
+        if (count_after_compaction < count_before_compaction) {
+          return true;
+        }
+        return false;
+      },
+      MonoDelta::FromSeconds(15), "Compaction is restricted for the stream."));
+  LOG(INFO) << "count_before_compaction: " << count_before_compaction
+            << " count_after_compaction: " << count_after_compaction;
+  ASSERT_EQ(count_after_compaction, count_before_compaction);
+
+  expected_dml_records = 2;
+  get_consistent_changes_resp = ASSERT_RESULT(GetAllPendingTxnsFromVirtualWAL(
+      stream_id, {table.table_id()}, expected_dml_records, false /* init_virtual_wal */,
+      kVWALSessionId1));
+  LOG(INFO) << "Got " << get_consistent_changes_resp.records.size() << " records.";
+  // 2 * (BEGIN + DML + COMMIT )
+  ASSERT_EQ(get_consistent_changes_resp.records.size(), 6);
 }
 
 }  // namespace cdc

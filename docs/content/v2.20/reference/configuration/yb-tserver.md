@@ -740,7 +740,7 @@ Specifies the lowest YSQL message level to log.
 
 Size of YSQL layer output buffer, in bytes. YSQL buffers query responses in this output buffer until either a buffer flush is requested by the client or the buffer overflows.
 
-As long as no data has been flushed from the buffer, the database can retry queries on retryable errors. For example, you can increase the size of the buffer so that YSQL can retry [read restart errors](../../../architecture/transactions/read-restart-error).
+As long as no data has been flushed from the buffer, the database can retry queries on retryable errors. For example, you can increase the size of the buffer so that YSQL can retry [read restart errors](../../../architecture/transactions/read-committed/#read-restart-errors).
 
 Default: `262144` (256kB, type: int32)
 
@@ -974,7 +974,7 @@ To upgrade from an older version that doesn't support RPC compression (such as 2
 
 ## Security flags
 
-For details on enabling client-server encryption, see [Client-server encryption](../../../secure/tls-encryption/client-to-server/).
+For details on enabling encryption in transit, see [Encryption in transit](../../../secure/tls-encryption/).
 
 ##### --certs_dir
 
@@ -982,17 +982,17 @@ Directory that contains certificate authority, private key, and certificates for
 
 Default: `""` (Uses `<data drive>/yb-data/tserver/data/certs`.)
 
-##### --allow_insecure_connections
-
-Allow insecure connections. Set to `false` to prevent any process with unencrypted communication from joining a cluster. Note that this flag requires the [`use_node_to_node_encryption`](#use-node-to-node-encryption) to be enabled and [`use_client_to_server_encryption`](#use-client-to-server-encryption) to be enabled.
-
-Default: `true`
-
 ##### --certs_for_client_dir
 
 The directory that contains certificate authority, private key, and certificates for this server that should be used for client-to-server communications.
 
-Default: `""` (Use the same directory as for server-to-server communications.)
+Default: `""` (Use the same directory as certs_dir.)
+
+##### --allow_insecure_connections
+
+Allow insecure connections. Set to `false` to prevent any process with unencrypted communication from joining a cluster. Note that this flag requires the [use_node_to_node_encryption](#use-node-to-node-encryption) to be enabled and [use_client_to_server_encryption](#use-client-to-server-encryption) to be enabled.
+
+Default: `true`
 
 ##### --dump_certificate_entries
 
@@ -1002,13 +1002,15 @@ Default: `false`
 
 ##### --use_client_to_server_encryption
 
-Use client-to-server, or client-server, encryption with YCQL.
+Use client-to-server (client-to-node) encryption to protect data in transit between YugabyteDB servers and clients, tools, and APIs.
 
 Default: `false`
 
 ##### --use_node_to_node_encryption
 
-Enable server-server or node-to-node encryption between YugabyteDB YB-Master and YB-TServer servers in a cluster or universe. To work properly, all YB-Master servers must also have their [`--use_node_to_node_encryption`](../yb-master/#use-node-to-node-encryption) setting enabled. When enabled, then [`--allow_insecure_connections`](#allow-insecure-connections) must be disabled.
+Enable server-server (node-to-node) encryption between YugabyteDB YB-Master and YB-TServer servers in a cluster or universe. To work properly, all YB-Master servers must also have their [--use_node_to_node_encryption](../yb-master/#use-node-to-node-encryption) setting enabled.
+
+When enabled, [--allow_insecure_connections](#allow-insecure-connections) should be set to false to disallow insecure connections.
 
 Default: `false`
 
@@ -1406,7 +1408,7 @@ Default: 1024
 
 ##### yb_read_from_followers
 
-Controls whether or not reading from followers is enabled. For more information, refer to [Follower reads](../../../explore/going-beyond-sql/follower-reads-ysql/).
+Controls whether or not reading from followers is enabled. For more information, refer to [Follower reads](../../../explore/ysql-language-features/going-beyond-sql/follower-reads-ysql/).
 
 Default: false
 
@@ -1418,7 +1420,7 @@ Default: 30000 (30 seconds)
 
 ##### default_transaction_read_only
 
-Turn this setting `ON/TRUE/1` to make all the transactions in the current session read-only. This is helpful when you want to run reports or set up [follower reads](../../../explore/going-beyond-sql/follower-reads-ysql/#read-only-transaction).
+Turn this setting `ON/TRUE/1` to make all the transactions in the current session read-only. This is helpful when you want to run reports or set up [Follower reads](../../../explore/ysql-language-features/going-beyond-sql/follower-reads-ysql/).
 
 Default: false
 

@@ -363,7 +363,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 				 errmsg("permission denied to create tablespace \"%s\"",
 						stmt->tablespacename),
 				 errhint("Must be superuser or a member of the yb_db_admin "
-				 		 "role to create a tablespace.")));
+						 "role to create a tablespace.")));
 
 	/* However, the eventual owner of the tablespace need not be */
 	if (stmt->owner)
@@ -630,20 +630,18 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 				 errdetail_log("%s", detail_log)));
 	}
 
-  /* Check if there are snapshot schedules, disallow dropping in such cases */
+	/* Check if there are snapshot schedules, disallow dropping in such cases */
 	if (IsYugaByteEnabled())
 	{
 		bool is_active;
-    HandleYBStatus(YBCPgCheckIfPitrActive(&is_active));
-    if (is_active)
-    {
-      ereport(ERROR,
-			    (errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-				   errmsg("tablespace \"%s\" cannot be dropped. "
-					   "Dropping tablespaces is not allowed on clusters "
-						 "with Point in Time Restore activated.",
-             tablespacename)));
-    }
+		HandleYBStatus(YBCPgCheckIfPitrActive(&is_active));
+		if (is_active)
+			ereport(ERROR,
+					(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+					 errmsg("tablespace \"%s\" cannot be dropped. "
+							"Dropping tablespaces is not allowed on clusters "
+							"with Point in Time Restore activated.",
+							tablespacename)));
 	}
 
 	/* DROP hook for the tablespace being removed */
@@ -1342,7 +1340,10 @@ check_default_tablespace(char **newval, void **extra, GucSource source)
 	 * If Connection Manager is enabled, make the connection sticky.
 	 */
 	if (YbIsClientYsqlConnMgr())
+	{
+		elog(LOG, "Setting sticky connection for default_tablespace");
 		yb_ysql_conn_mgr_sticky_guc = true;
+	}
 
 	return true;
 }
@@ -1526,7 +1527,10 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 	 * If Connection Manager is enabled, make the connection sticky.
 	 */
 	if (YbIsClientYsqlConnMgr())
+	{
+		elog(LOG, "Setting sticky connection for temp_tablespaces");
 		yb_ysql_conn_mgr_sticky_guc = true;
+	}
 
 	return true;
 }

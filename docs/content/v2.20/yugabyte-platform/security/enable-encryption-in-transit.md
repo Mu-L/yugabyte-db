@@ -15,7 +15,7 @@ type: docs
 
 YugabyteDB Anywhere allows you to protect data in transit by using the following:
 
-- Server-to-server encryption for intra-node communication between YB-Master and YB-TServer nodes.
+- Server-to-server encryption for inter-node communication between YB-Master and YB-TServer nodes.
 - Client-to-server encryption for communication between clients and nodes when using CLIs, tools, and APIs for YSQL and YCQL.
 - Encryption for communication between YugabyteDB Anywhere and other services, including LDAP, OIDC, Hashicorp Vault, Webhook, and S3 backup storage.
 
@@ -510,7 +510,7 @@ During the universe creation, you can enable TLS certificates issued by the cert
    - Click **Upload Root Certificate** and select the root certificate file that you prepared.
    - Click **Add** to make the certificate available.
 
-1. Configure the Kubernetes-based cloud provider by following instructions provided in [Configure region and zones](../../configure-yugabyte-platform/set-up-cloud-provider/kubernetes/#configure-region-and-zones). In the **Add new region** dialog shown in the following illustration, you would be able to specify the Issuer name or the ClusterIssuer name for each zone. Because an Issuer Kind is a Kubernetes namespace-scoped resource, the zone definition should also set the **Namespace** field value if an Issuer Kind is selected:
+1. Configure the Kubernetes-based cloud provider by following instructions provided in [Configure region and zones](../../configure-yugabyte-platform/kubernetes/#configure-region-and-zones). In the **Add new region** dialog shown in the following illustration, you would be able to specify the Issuer name or the ClusterIssuer name for each zone. Because an Issuer Kind is a Kubernetes namespace-scoped resource, the zone definition should also set the **Namespace** field value if an Issuer Kind is selected:
 
    ![Add new region](/images/yp/security/kubernetes-cert-manager-add-region.png)
 
