@@ -231,6 +231,10 @@ DEFINE_UNKNOWN_bool(enable_ysql, true,
     "specified or can be auto-detected). Also each tablet server will start a PostgreSQL "
     "server as a child process.");
 
+DEFINE_RUNTIME_bool(ysql_allow_duplicating_repeatable_read_queries, yb::kIsDebug,
+    "Response with success when duplicate write request is detected, "
+    "if case this request contains read time.");
+
 DECLARE_int32(ysql_transaction_abort_timeout_ms);
 DECLARE_bool(ysql_yb_disable_wait_for_backends_catalog_version);
 
@@ -505,14 +509,13 @@ class WriteQueryCompletionCallback {
     SCOPED_WAIT_STATUS(OnCpu_Active);
     VLOG(1) << __PRETTY_FUNCTION__ << " completing with status " << status;
     // When we don't need to return any data, we could return success on duplicate request.
-    if (status.IsAlreadyPresent() &&
-        query_->ql_write_ops()->empty() &&
-        query_->pgsql_write_ops()->empty() &&
-        query_->client_request()->redis_write_batch().empty()) {
+    if (status.IsAlreadyPresent() && AllowDuplicateRequest()) {
       status = Status::OK();
     }
 
     TRACE("Write completing with status $0", yb::ToString(status));
+
+    CopyMetricsToPgsqlResponse();
 
     if (!status.ok()) {
       if (leader_term_set_in_request_ && status.IsAborted() &&
@@ -554,6 +557,26 @@ class WriteQueryCompletionCallback {
  private:
   TabletServerErrorPB* get_error() const {
     return response_->mutable_error();
+  }
+
+  void CopyMetricsToPgsqlResponse() const {
+    auto tablet_metrics = query_->scoped_tablet_metrics();
+    auto statistics = query_->scoped_statistics();
+
+    if (auto* resp = query_->GetPgsqlResponseForMetricsCapture()) {
+      tablet_metrics.CopyToPgsqlResponse(resp);
+      statistics.CopyToPgsqlResponse(resp);
+    }
+  }
+
+  bool AllowDuplicateRequest() const {
+    if (!query_->ql_write_ops()->empty() ||
+        !query_->client_request()->redis_write_batch().empty()) {
+      return false;
+    }
+    return query_->pgsql_write_ops()->empty() ||
+           (FLAGS_ysql_allow_duplicating_repeatable_read_queries &&
+            query_->client_request()->has_read_time());
   }
 
   tablet::TabletPeerPtr tablet_peer_;
@@ -1093,10 +1116,12 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
       return;
     }
 
+    auto skip_aborting_active_transactions =
+        FLAGS_TEST_enable_object_locking_for_table_locks ||
+        FLAGS_TEST_skip_aborting_active_transactions_during_schema_change;
     // After write operation is paused, active transactions will be aborted for YSQL transactions.
     if (tablet.tablet->table_type() == TableType::PGSQL_TABLE_TYPE &&
-        req->should_abort_active_txns() &&
-        !FLAGS_TEST_skip_aborting_active_transactions_during_schema_change) {
+        req->should_abort_active_txns() && !skip_aborting_active_transactions) {
       DCHECK(req->has_transaction_id());
       if (tablet.tablet->transaction_participant() == nullptr) {
         auto status = STATUS(
