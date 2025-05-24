@@ -60,11 +60,14 @@ DEFINE_RUNTIME_string(ysql_major_upgrade_user, "yugabyte_upgrade",
     "This user should have superuser privileges and the password must be placed in the `.pgpass` "
     "file on all yb-master nodes.");
 
-DEFINE_RUNTIME_bool(ysql_upgrade_import_stats, false,
+DEFINE_RUNTIME_bool(ysql_upgrade_import_stats, true,
     "Import relation and attribute stats as part of the YSQL Major upgrade");
 
 DEFINE_test_flag(bool, ysql_fail_cleanup_previous_version_catalog, false,
     "Fail the cleanup of the previous version ysql catalog");
+
+DEFINE_test_flag(bool, ysql_block_writes_to_catalog, false,
+    "Block writes to the catalog tables like we would during a ysql major upgrade");
 
 using yb::pgwrapper::PgWrapper;
 
@@ -289,6 +292,10 @@ bool YsqlInitDBAndMajorUpgradeHandler::IsWriteToCatalogTableAllowed(
     return is_forced_update;
   }
 
+  if (FLAGS_TEST_ysql_block_writes_to_catalog) {
+    return is_forced_update;
+  }
+
   // If we are not in the middle of a major upgrade then only allow updates to the current
   // version.
   return IsCurrentVersionYsqlCatalogTable(table_id);
@@ -352,12 +359,12 @@ void YsqlInitDBAndMajorUpgradeHandler::RunMajorVersionUpgrade(const LeaderEpoch&
     if (update_state_status.ok()) {
       LOG(INFO) << "Ysql major catalog upgrade completed successfully";
     } else {
-      LOG(ERROR) << "Failed to set major version upgrade state: " << update_state_status;
+      LOG(DFATAL) << "Failed to set major version upgrade state: " << update_state_status;
     }
     return;
   }
 
-  LOG(ERROR) << "Ysql major catalog upgrade failed: " << status;
+  LOG(WARNING) << "Ysql major catalog upgrade failed: " << status;
   ERROR_NOT_OK(
       TransitionMajorCatalogUpgradeState(YsqlMajorCatalogUpgradeInfoPB::FAILED, epoch, status),
       "Failed to set major version upgrade state");

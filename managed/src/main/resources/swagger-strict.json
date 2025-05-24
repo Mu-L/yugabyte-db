@@ -2559,6 +2559,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -4303,6 +4304,23 @@
         }
       ]
     },
+    "BasicAuthCredentials" : {
+      "properties" : {
+        "password" : {
+          "description" : "Password",
+          "type" : "string"
+        },
+        "username" : {
+          "description" : "Username",
+          "type" : "string"
+        }
+      },
+      "required" : [
+        "password",
+        "username"
+      ],
+      "type" : "object"
+    },
     "BootstrapBackupParams" : {
       "description" : "Backup parameters for bootstrapping",
       "properties" : {
@@ -5185,6 +5203,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -8173,6 +8192,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -8944,6 +8964,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -10333,6 +10354,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -10845,6 +10867,43 @@
         "lines"
       ],
       "type" : "object"
+    },
+    "LokiConfig" : {
+      "allOf" : [
+        {
+          "$ref" : "#/definitions/TelemetryProviderConfig"
+        },
+        {
+          "description" : "Loki Config",
+          "properties" : {
+            "authType" : {
+              "description" : "Auth Type",
+              "enum" : [
+                "BasicAuth",
+                "NoAuth"
+              ],
+              "type" : "string"
+            },
+            "basicAuth" : {
+              "$ref" : "#/definitions/BasicAuthCredentials",
+              "description" : "Basic Auth Credentials"
+            },
+            "endpoint" : {
+              "description" : "End Point",
+              "type" : "string"
+            },
+            "organizationID" : {
+              "description" : "Organization/Tenant ID",
+              "type" : "string"
+            }
+          },
+          "required" : [
+            "authType",
+            "endpoint"
+          ],
+          "type" : "object"
+        }
+      ]
     },
     "MaintenanceWindow" : {
       "description" : "Maintenance Window",
@@ -12277,6 +12336,7 @@
             "Reprovisioning",
             "Provisioned",
             "SoftwareInstalled",
+            "UpgradeMasterSoftware",
             "UpgradeSoftware",
             "RollbackUpgrade",
             "FinalizeUpgrade",
@@ -12533,6 +12593,7 @@
             "Reprovisioning",
             "Provisioned",
             "SoftwareInstalled",
+            "UpgradeMasterSoftware",
             "UpgradeSoftware",
             "RollbackUpgrade",
             "FinalizeUpgrade",
@@ -14443,6 +14504,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -15421,6 +15483,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -16223,6 +16286,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -17706,6 +17770,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -18240,6 +18305,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -18616,6 +18682,7 @@
               "DecommissionNode",
               "CloneNamespace",
               "UpdateOOMServiceState",
+              "SendUserNotification",
               "KubernetesCheckVolumeExpansion",
               "KubernetesPostExpansionCheckVolume",
               "NodeCertReloadTask",
@@ -19413,6 +19480,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -20480,6 +20548,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -21114,7 +21183,8 @@
               "UniverseKey",
               "MasterKey",
               "NodeAgent",
-              "Yba"
+              "Yba",
+              "User"
             ],
             "type" : "string"
           },
@@ -21220,7 +21290,8 @@
               "EnableNodeAgent",
               "Decommission",
               "CloneNamespace",
-              "UpdateOOMServiceState"
+              "UpdateOOMServiceState",
+              "SendUserNotification"
             ],
             "type" : "string"
           },
@@ -21375,7 +21446,8 @@
             "DATA_DOG",
             "SPLUNK",
             "AWS_CLOUDWATCH",
-            "GCP_CLOUD_MONITORING"
+            "GCP_CLOUD_MONITORING",
+            "LOKI"
           ],
           "type" : "string"
         }
@@ -21746,6 +21818,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -22391,6 +22464,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -23291,6 +23365,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -23900,6 +23975,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -24509,6 +24585,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -25520,6 +25597,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",
@@ -26637,6 +26715,7 @@
             "DecommissionNode",
             "CloneNamespace",
             "UpdateOOMServiceState",
+            "SendUserNotification",
             "KubernetesCheckVolumeExpansion",
             "KubernetesPostExpansionCheckVolume",
             "NodeCertReloadTask",

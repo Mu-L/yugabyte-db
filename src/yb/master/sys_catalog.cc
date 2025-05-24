@@ -173,8 +173,9 @@ std::string SysCatalogTable::schema_column_metadata() { return kSysCatalogTableC
 
 SysCatalogTable::SysCatalogTable(Master* master, MetricRegistry* metrics)
     : doc_read_context_(std::make_unique<docdb::DocReadContext>(
-          kLogPrefix, TableType::YQL_TABLE_TYPE, docdb::Index::kFalse, BuildTableSchema(),
-          kSysCatalogSchemaVersion)),
+          kLogPrefix, TableType::YQL_TABLE_TYPE,
+          docdb::Index::kFalse, std::make_shared<dockv::SchemaPackingRegistry>(kLogPrefix),
+          BuildTableSchema(), kSysCatalogSchemaVersion)),
       metric_registry_(metrics),
       metric_entity_(METRIC_ENTITY_server.Instantiate(metric_registry_, "yb.master")),
       master_(master) {}
@@ -745,8 +746,8 @@ Status SysCatalogTable::SyncWrite(SysCatalogWriter* writer) {
                    << "complete. Continuing to wait.";
       time = CoarseMonoClock::now();
       if (time >= deadline) {
-        LOG(ERROR) << "Already waited for a total of " << ::yb::ToString(waited_so_far) << ". "
-                   << "Returning a timeout from SyncWrite.";
+        LOG(WARNING) << "Already waited for a total of " << ::yb::ToString(waited_so_far) << ". "
+                     << "Returning a timeout from SyncWrite.";
         return STATUS_FORMAT(TimedOut, "SyncWrite timed out after $0", waited_so_far);
       }
     }
@@ -1406,7 +1407,7 @@ Result<uint32_t> SysCatalogTable::ReadPgClassColumnWithOidValue(const uint32_t d
     }
 
     oid = result_oid_col->uint32_value();
-    VLOG(1) << "Table oid: " << table_oid << column_name << " oid: " << oid;
+    VLOG(1) << "Table oid: " << table_oid << " Column " << column_name << " oid: " << oid;
   }
 
   return oid;
@@ -1501,7 +1502,7 @@ Result<std::unordered_map<string, uint32_t>> SysCatalogTable::ReadPgAttNameTypid
     if (attnum_col->int16_value() < 0) {
       // Ignore system columns.
       VLOG(1) << "Ignoring system column (attnum = " << attnum_col->int16_value()
-              << ") for attrelid $0:" << table_oid;
+              << ") for attrelid: " << table_oid;
       continue;
     }
 
@@ -1521,7 +1522,7 @@ Result<std::unordered_map<string, uint32_t>> SysCatalogTable::ReadPgAttNameTypid
     if (atttypid == kPgInvalidOid) {
       // Ignore dropped columns.
       VLOG(1) << "Ignoring dropped column " << attname << " (atttypid = 0)"
-              << " for attrelid $0:" << table_oid;
+              << " for attrelid: " << table_oid;
       continue;
     }
 
@@ -2050,7 +2051,7 @@ Result<RelIdToAttributesMap> SysCatalogTable::ReadPgAttributeInfo(
     if (attnum < 0) {
       // Ignore system columns.
       VLOG(1) << "Ignoring system column (attnum = " << attnum_col->int16_value()
-              << ") for attrelid $0:" << attrelid;
+              << ") for attrelid: " << attrelid;
       continue;
     }
 
@@ -2059,7 +2060,7 @@ Result<RelIdToAttributesMap> SysCatalogTable::ReadPgAttributeInfo(
     if (atttypid == kPgInvalidOid) {
       // Ignore dropped columns.
       VLOG(1) << "Ignoring dropped column " << attname << " (atttypid = 0)"
-              << " for attrelid $0:" << attrelid;
+              << " for attrelid: " << attrelid;
       continue;
     }
 

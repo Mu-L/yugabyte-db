@@ -107,6 +107,7 @@
 #include "yb/tserver/tserver_xcluster_context_if.h"
 #include "yb/tserver/xcluster_safe_time_map.h"
 #include "yb/tserver/ysql_advisory_lock_table.h"
+#include "yb/tserver/ysql_lease.h"
 
 #include "yb/util/async_util.h"
 #include "yb/util/backoff_waiter.h"
@@ -231,15 +232,15 @@ DEFINE_UNKNOWN_bool(enable_ysql, true,
     "specified or can be auto-detected). Also each tablet server will start a PostgreSQL "
     "server as a child process.");
 
+DEFINE_RUNTIME_bool(ysql_allow_duplicating_repeatable_read_queries, yb::kIsDebug,
+    "Response with success when duplicate write request is detected, "
+    "if case this request contains read time.");
+
 DECLARE_int32(ysql_transaction_abort_timeout_ms);
 DECLARE_bool(ysql_yb_disable_wait_for_backends_catalog_version);
 
 DEFINE_test_flag(
     string, mini_cluster_pg_host_port, "", "The PG host:port used in PostgresMiniclusterTest");
-
-DEFINE_test_flag(
-    int32, clone_pg_schema_inject_latency_ms, 0,
-    "Number of milliseconds the clone state manager will sleep in CloneNamespace.");
 
 DEFINE_test_flag(bool, fail_alter_schema_after_abort_transactions, false,
     "If true, setup an error status in AlterSchema and respond success to rpc call. "
@@ -505,14 +506,13 @@ class WriteQueryCompletionCallback {
     SCOPED_WAIT_STATUS(OnCpu_Active);
     VLOG(1) << __PRETTY_FUNCTION__ << " completing with status " << status;
     // When we don't need to return any data, we could return success on duplicate request.
-    if (status.IsAlreadyPresent() &&
-        query_->ql_write_ops()->empty() &&
-        query_->pgsql_write_ops()->empty() &&
-        query_->client_request()->redis_write_batch().empty()) {
+    if (status.IsAlreadyPresent() && AllowDuplicateRequest()) {
       status = Status::OK();
     }
 
     TRACE("Write completing with status $0", yb::ToString(status));
+
+    CopyMetricsToPgsqlResponse();
 
     if (!status.ok()) {
       if (leader_term_set_in_request_ && status.IsAborted() &&
@@ -554,6 +554,26 @@ class WriteQueryCompletionCallback {
  private:
   TabletServerErrorPB* get_error() const {
     return response_->mutable_error();
+  }
+
+  void CopyMetricsToPgsqlResponse() const {
+    auto tablet_metrics = query_->scoped_tablet_metrics();
+    auto statistics = query_->scoped_statistics();
+
+    if (auto* resp = query_->GetPgsqlResponseForMetricsCapture()) {
+      tablet_metrics.CopyToPgsqlResponse(resp);
+      statistics.CopyToPgsqlResponse(resp);
+    }
+  }
+
+  bool AllowDuplicateRequest() const {
+    if (!query_->ql_write_ops()->empty() ||
+        !query_->client_request()->redis_write_batch().empty()) {
+      return false;
+    }
+    return query_->pgsql_write_ops()->empty() ||
+           (FLAGS_ysql_allow_duplicating_repeatable_read_queries &&
+            query_->client_request()->has_read_time());
   }
 
   tablet::TabletPeerPtr tablet_peer_;
@@ -802,7 +822,7 @@ void TabletServiceAdminImpl::BackfillIndex(
       tablet.tablet->SafeTime(tablet::RequireLease::kFalse, read_at, deadline);
   DVLOG(1) << "Got safe time " << safe_time.ToString();
   if (!safe_time.ok()) {
-    LOG(ERROR) << "Could not get a good enough safe time " << safe_time.ToString();
+    LOG(WARNING) << "Could not get a good enough safe time " << safe_time.ToString();
     SetupErrorAndRespond(resp->mutable_error(), safe_time.status(), &context);
     return;
   }
@@ -1040,11 +1060,11 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
     schema_version = tablet.peer->tablet_metadata()->schema_version(
         req->has_alter_table_id() ? req->alter_table_id() : "");
     if (schema_version == req->schema_version()) {
-      LOG(ERROR) << "The current schema does not match the request schema."
-                 << " version=" << schema_version
-                 << " current-schema=" << tablet_schema.ToString()
-                 << " request-schema=" << req_schema.ToString()
-                 << " (corruption)";
+      LOG(DFATAL) << "The current schema does not match the request schema."
+                  << " version=" << schema_version
+                  << " current-schema=" << tablet_schema.ToString()
+                  << " request-schema=" << req_schema.ToString()
+                  << " (corruption)";
       SetupErrorAndRespond(resp->mutable_error(),
                            STATUS(Corruption, "got a different schema for the same version number"),
                            TabletServerErrorPB::MISMATCHED_SCHEMA, &context);
@@ -1054,11 +1074,11 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
 
   // If the current schema is newer than the one in the request reject the request.
   if (schema_version > req->schema_version()) {
-    LOG(ERROR) << "Tablet " << req->tablet_id() << " has a newer schema"
-               << " version=" << schema_version
-               << " req->schema_version()=" << req->schema_version()
-               << "\n current-schema=" << tablet_schema.ToString()
-               << "\n request-schema=" << req_schema.ToString();
+    LOG(WARNING) << "Tablet " << req->tablet_id() << " has a newer schema"
+                 << " version=" << schema_version
+                 << " req->schema_version()=" << req->schema_version()
+                 << "\n current-schema=" << tablet_schema.ToString()
+                 << "\n request-schema=" << req_schema.ToString();
     SetupErrorAndRespond(
         resp->mutable_error(),
         STATUS_SUBSTITUTE(
@@ -1093,15 +1113,17 @@ void TabletServiceAdminImpl::AlterSchema(const tablet::ChangeMetadataRequestPB* 
       return;
     }
 
+    auto skip_aborting_active_transactions =
+        FLAGS_TEST_enable_object_locking_for_table_locks ||
+        FLAGS_TEST_skip_aborting_active_transactions_during_schema_change;
     // After write operation is paused, active transactions will be aborted for YSQL transactions.
     if (tablet.tablet->table_type() == TableType::PGSQL_TABLE_TYPE &&
-        req->should_abort_active_txns() &&
-        !FLAGS_TEST_skip_aborting_active_transactions_during_schema_change) {
+        req->should_abort_active_txns() && !skip_aborting_active_transactions) {
       DCHECK(req->has_transaction_id());
       if (tablet.tablet->transaction_participant() == nullptr) {
         auto status = STATUS(
             IllegalState, "Transaction participant is null for tablet " + req->tablet_id());
-        LOG(ERROR) << status;
+        LOG(DFATAL) << status;
         SetupErrorAndRespond(
             resp->mutable_error(),
             status,
@@ -1223,7 +1245,7 @@ void TabletServiceImpl::VerifyTableRowRange(
   const auto safe_time = tablet->SafeTime(tablet::RequireLease::kFalse, read_at, deadline);
   DVLOG(1) << "Got safe time " << safe_time.ToString();
   if (!safe_time.ok()) {
-    LOG(ERROR) << "Could not get a good enough safe time " << safe_time.ToString();
+    LOG(DFATAL) << "Could not get a good enough safe time " << safe_time.ToString();
     SetupErrorAndRespond(resp->mutable_error(), safe_time.status(), &context);
     return;
   }
@@ -2042,7 +2064,7 @@ void TabletServiceAdminImpl::FlushTablets(const FlushTabletsRequestPB* req,
     case FlushTabletsRequestPB::LOG_GC:
       for (const auto& tablet : tablet_peers) {
         resp->set_failed_tablet_id(tablet->tablet_id());
-        RETURN_UNKNOWN_ERROR_IF_NOT_OK(tablet->RunLogGC(), resp, &context);
+        RETURN_UNKNOWN_ERROR_IF_NOT_OK(tablet->RunLogGC(req->rollover()), resp, &context);
         resp->clear_failed_tablet_id();
       }
       break;
@@ -2391,7 +2413,7 @@ void TabletServiceAdminImpl::WaitForYsqlBackendsCatalogVersion(
                  server_->GetSharedMemoryPostgresAuthKey(), modified_deadline)
                  .Connect();
   if (!res.ok()) {
-    LOG_WITH_PREFIX_AND_FUNC(ERROR) << "failed to connect to local postgres: " << res.status();
+    LOG_WITH_PREFIX_AND_FUNC(WARNING) << "failed to connect to local postgres: " << res.status();
     SetupErrorAndRespond(resp->mutable_error(), res.status(), &context);
     return;
   }
@@ -2438,7 +2460,7 @@ void TabletServiceAdminImpl::WaitForYsqlBackendsCatalogVersion(
     LOG_WITH_PREFIX(INFO) << "Deadline reached: still waiting on " << num_lagging_backends
                           << " backends " << db_ver_tag;
   } else if (!s.ok()) {
-    LOG_WITH_PREFIX_AND_FUNC(ERROR) << "num lagging backends query failed: " << s;
+    LOG_WITH_PREFIX_AND_FUNC(WARNING) << "num lagging backends query failed: " << s;
     SetupErrorAndRespond(resp->mutable_error(), s, &context);
     return;
   }
@@ -3372,6 +3394,18 @@ void TabletServiceImpl::GetMetrics(const GetMetricsRequestPB* req,
   context.RespondSuccess();
 }
 
+void TabletServiceImpl::GetObjectLockStatus(const GetObjectLockStatusRequestPB* req,
+                                            GetObjectLockStatusResponsePB* resp,
+                                            rpc::RpcContext context) {
+  auto ts_local_lock_manager = server_->ts_local_lock_manager();
+  if (!ts_local_lock_manager) {
+    SetupErrorAndRespond(
+        resp->mutable_error(), STATUS(IllegalState, "TSLocalLockManager not found."), &context);
+  }
+  ts_local_lock_manager->PopulateObjectLocks(resp->mutable_object_lock_infos());
+  context.RespondSuccess();
+}
+
 void TabletServiceImpl::GetLockStatus(const GetLockStatusRequestPB* req,
                                       GetLockStatusResponsePB* resp,
                                       rpc::RpcContext context) {
@@ -3645,13 +3679,10 @@ void TabletServiceImpl::AcquireObjectLocks(
     SetupErrorAndRespond(
         resp->mutable_error(), STATUS(IllegalState, "TSLocalLockManager not found..."), &context);
   }
-  auto s = ts_local_lock_manager->AcquireObjectLocks(*req, context.GetClientDeadline());
-  resp->set_propagated_hybrid_time(server_->Clock()->Now().ToUint64());
-  if (!s.ok()) {
-    SetupErrorAndRespond(resp->mutable_error(), s, &context);
-  } else {
-    context.RespondSuccess();
-  }
+  const auto deadline = context.GetClientDeadline();
+  ts_local_lock_manager->AcquireObjectLocksAsync(
+      *req, deadline,
+      MakeRpcOperationCompletionCallback(std::move(context), resp, server_->Clock()));
 }
 
 void TabletServiceImpl::ReleaseObjectLocks(
@@ -3684,7 +3715,13 @@ void TabletServiceImpl::ReleaseObjectLocks(
 
 Result<GetYSQLLeaseInfoResponsePB> TabletServiceImpl::GetYSQLLeaseInfo(
     const GetYSQLLeaseInfoRequestPB& req, CoarseTimePoint deadline) {
-  return server_->GetYSQLLeaseInfo();
+  auto lease_info = VERIFY_RESULT(server_->GetYSQLLeaseInfo());
+  GetYSQLLeaseInfoResponsePB resp;
+  resp.set_is_live(lease_info.is_live);
+  if (lease_info.is_live) {
+    resp.set_lease_epoch(lease_info.lease_epoch);
+  }
+  return resp;
 }
 
 void TabletServiceImpl::AdminExecutePgsql(
