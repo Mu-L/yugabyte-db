@@ -2209,3 +2209,28 @@ templates:
         on {{ $value | printf "%.0f" }} node(s).
 
         Affected nodes: {{ $labels.affected_node_names }}
+
+  OTEL_METRIC_EXPORT_FAILURE:
+    name: OTel Metric Export Failure
+    description: DB metrics are not being exported for universe
+    queryTemplate: count by (universe_uuid) (increase(otelcol_exporter_send_failed_metric_points{universe_uuid="__universeUuid__"}[3m]))
+      {{ query_condition }} {{ query_threshold }}
+    defaultDurationSec: 300
+    createForNewCustomer: true
+    defaultThresholdMap:
+      SEVERE:
+        threshold: 0.0
+    targetType: UNIVERSE
+    defaultThresholdCondition: GREATER_THAN
+    defaultThresholdUnit: COUNT
+    thresholdUnitName: metric(s)
+    labels:
+      affected_node_names: >-
+        {{ range $index, $element := query "sum by (universe_uuid, node_name)
+        (increase(otelcol_exporter_send_failed_metric_points{universe_uuid='{{ $labels.universe_uuid }}'}[3m]))
+        > 0" }}{{if $index}},{{end}}{{ $element.Labels.node_name }}{{ end }}
+    annotations:
+      summary: >-
+        DB metrics export is failing for universe '{{ $labels.source_name }}'
+        on {{ $value | printf "%.0f" }} node(s).
+        Affected nodes: {{ $labels.affected_node_names }}
