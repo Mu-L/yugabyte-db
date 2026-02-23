@@ -2089,7 +2089,8 @@
             "UpdateAdditionalServicesState",
             "KubernetesToggleImmutableYbc",
             "OperatorImportUniverse",
-            "RunScript"
+            "RunScript",
+            "CollectFiles"
           ],
           "example" : "Create User",
           "readOnly" : true,
