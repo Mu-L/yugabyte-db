@@ -497,6 +497,7 @@
           "actions": {
             "viewDetails": "View Details",
             "openUpgradeMonitor": "Open Upgrade Monitor",
+            "openUpgradeMonitorToContinue": "Open Upgrade Monitor to Continue",
             "upgradeDatabase": "Upgrade Database",
             "retry": "Retry"
           },
