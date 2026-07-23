@@ -172,10 +172,6 @@ Result<bool> ShouldHandleTransactionally(const PgTxnManager& txn_manager,
   }
   const auto has_non_ddl_txn = txn_manager.IsTxnInProgress();
 
-  if (!YBCIsLegacyModeForCatalogOps()) {
-    return true;
-  }
-
   if (!table.schema().table_properties().is_ysql_catalog_table()) {
     SCHECK(has_non_ddl_txn, IllegalState, "Transactional operation requires transaction");
     return true;
@@ -190,6 +186,11 @@ Result<bool> ShouldHandleTransactionally(const PgTxnManager& txn_manager,
                          "Transaction for catalog table write operation '$0' not found",
                          table.table_name().table_name());
   }
+
+  if (!YBCIsLegacyModeForCatalogOps()) {
+    return true;
+  }
+
   return false;
 }
 
