@@ -3496,6 +3496,13 @@ class PgClientSession::Impl {
             read_time_serial_no_, txn_str);
       }
     }
+
+    if (const auto* read_point = setup_session_result.is_plain ? session->read_point() : nullptr;
+        read_point && read_point->GetReadTime()) {
+      VLOG_WITH_PREFIX(3) << "Saving read time that is already picked";
+      read_point_history_.Save(*read_point, read_time_serial_no_);
+    }
+
     session->FlushAsync([this, data, trace, trace_created_locally,
                          start_time](client::FlushStatus* flush_status) {
       ADOPT_TRACE(trace.get());
@@ -3516,15 +3523,6 @@ class PgClientSession::Impl {
         Trace::DumpTraceIfNecessary(trace.get(), FLAGS_txn_print_trace_every_n, must_log_trace);
       }
     });
-    if (setup_session_result.is_plain) {
-      const auto& read_point = *session->read_point();
-      if (read_point.GetReadTime()) {
-        VLOG_WITH_PREFIX(3) << "Read time is already picked, saving it "
-            << AsString(read_point.GetReadTime()) << " to read time serial no: "
-            << read_time_serial_no_;
-        read_point_history_.Save(read_point, read_time_serial_no_);
-      }
-    }
     return Status::OK();
   }
 
@@ -4093,10 +4091,8 @@ class PgClientSession::Impl {
       return Status::OK();
     }
     auto& session_data = GetSessionData(PgClientSessionKind::kPlain);
-    auto& session = *session_data.session;
-    const auto& read_point = *session.read_point();
     TabletReadTime read_time_data;
-    if (!read_point.GetReadTime()) {
+    {
       auto& used_read_time = plain_session_used_read_time_.value;
       std::lock_guard guard(used_read_time.lock);
       if (!used_read_time.data) {
@@ -4123,15 +4119,19 @@ class PgClientSession::Impl {
     }
     plain_session_used_read_time_.pending_update = false;
     // At this point the read_time_data.value could be empty in 2 cases:
-    // - session already has a read time (i.e. read_point.GetReadTime() is true)
-    // - pending request has finished failed with an error (status != OK). Empty read time is used
-    //   in this case.
-    // Both cases are valid and in both cases the plain_session_used_read_time_.pending_update
-    // must be set to false because no further update is expected.
+    // - session already has a read time (i.e. was selected prior to sending of the request)
+    // - request has finished with error
+    auto& session = *session_data.session;
     if (read_time_data.value) {
       VLOG_WITH_PREFIX(3) << "Applying non empty used read time: " << read_time_data.value
           << " to read time serial no: " << read_time_serial_no_;
       session.SetReadPoint(read_time_data.value, read_time_data.tablet_id);
+    }
+
+    // Update history because a read point could have been chosen (due to multiple reasons:
+    // a used read time was received from DocDB or a read time was chosen while sending previous
+    // request).
+    if (const auto& read_point = *session.read_point(); read_point.GetReadTime()) {
       read_point_history_.Save(read_point, read_time_serial_no_);
     }
     return Status::OK();
