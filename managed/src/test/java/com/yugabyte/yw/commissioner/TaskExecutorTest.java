@@ -98,6 +98,7 @@ public class TaskExecutorTest extends PlatformGuiceApplicationBaseTest {
           TaskType.RollbackEditUniverse,
           TaskType.ReplaceNodeInUniverse,
           TaskType.EditKubernetesUniverse,
+          TaskType.RollbackEditKubernetesUniverse,
           TaskType.ReadOnlyClusterCreate,
           TaskType.ReadOnlyClusterDelete,
           TaskType.AddNodeToUniverse,

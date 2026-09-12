@@ -895,28 +895,34 @@ public class CustomerTaskManagerTest extends FakeDBApplication {
   }
 
   @Test
-  public void testRollbackEditKubernetesUniverseNotYetSupported() {
-    // K8s edit is not bound in TaskRollbackModule until RollbackEditKubernetesUniverse lands.
+  public void testRollbackEditKubernetesUniverse() {
+    // K8s edit is bound to EditKubernetesUniverseRollbackComputer, which submits
+    // RollbackEditKubernetesUniverse.
     mutableConfigFactory
         .globalRuntimeConf()
         .setValue("yb.task.allow_edit_universe_rollback", "true");
     universe = createKubernetesUniverse("k8s-edit-" + UUID.randomUUID());
+    JsonNode taskParams = editUniverseTaskParams(universe);
     CustomerTask failedTask =
         createFailedUniverseTask(
-            universe,
-            TaskType.EditKubernetesUniverse,
-            CustomerTask.TaskType.Update,
-            Json.newObject());
+            universe, TaskType.EditKubernetesUniverse, CustomerTask.TaskType.Update, taskParams);
     UUID failedTaskUUID = failedTask.getTaskUUID();
+    UUID rollbackTaskUUID = UUID.randomUUID();
+    persistTaskInfoPlaceholder(rollbackTaskUUID, TaskType.RollbackEditKubernetesUniverse);
     when(mockCommissioner.canTaskRollbackDetailed(any())).thenReturn(true);
-    when(mockCommissioner.getTaskParams(failedTaskUUID)).thenReturn(Json.newObject());
+    when(mockCommissioner.getTaskParams(failedTaskUUID)).thenReturn(taskParams);
+    when(mockCommissioner.submit(eq(TaskType.RollbackEditKubernetesUniverse), any()))
+        .thenReturn(rollbackTaskUUID);
 
-    PlatformServiceException ex =
-        assertThrows(
-            PlatformServiceException.class,
-            () -> taskManager.rollbackCustomerTask(customer.getUuid(), failedTaskUUID));
-    assertTrue(ex.getMessage().contains("not implemented"));
-    verify(mockCommissioner, times(0)).submit(any(), any());
+    CustomerTask rollbackTask =
+        taskManager.rollbackCustomerTask(customer.getUuid(), failedTaskUUID);
+
+    ArgumentCaptor<ITaskParams> paramsCaptor = ArgumentCaptor.forClass(ITaskParams.class);
+    verify(mockCommissioner)
+        .submit(eq(TaskType.RollbackEditKubernetesUniverse), paramsCaptor.capture());
+    assertNull(paramsCaptor.getValue().getPreviousTaskUUID());
+    assertEquals(CustomerTask.TaskType.RollbackEditKubernetesUniverse, rollbackTask.getType());
+    assertEquals(rollbackTaskUUID, rollbackTask.getTaskUUID());
   }
 
   @Test
@@ -929,7 +935,7 @@ public class CustomerTaskManagerTest extends FakeDBApplication {
     assertNotNull(computers.get(TaskType.SoftwareUpgradeYB));
     assertNotNull(computers.get(TaskType.SoftwareKubernetesUpgradeYB));
     assertNotNull(computers.get(TaskType.EditUniverse));
-    assertNull(computers.get(TaskType.EditKubernetesUniverse));
+    assertNotNull(computers.get(TaskType.EditKubernetesUniverse));
     assertNull(computers.get(TaskType.CreateUniverse));
   }
 
